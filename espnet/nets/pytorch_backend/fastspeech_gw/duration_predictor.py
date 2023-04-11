@@ -7,6 +7,7 @@
 """Duration predictor related modules."""
 
 import torch
+from gw.utils import LPF
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
@@ -31,7 +32,7 @@ class DurationPredictor(torch.nn.Module):
     """
 
     def __init__(
-        self, idim, n_layers=2, n_chans=384, kernel_size=3, dropout_rate=0.1, offset=1.0
+        self, idim, n_layers=2, n_chans=384, kernel_size=3, dropout_rate=0.1, offset=1.0, lpf_window_size=16,
     ):
         """Initilize duration predictor module.
 
@@ -64,6 +65,7 @@ class DurationPredictor(torch.nn.Module):
                 )
             ]
         self.linear = torch.nn.Linear(n_chans, 1)
+        self.lpf = LPF(lpf_window_size)
 
     def _forward(self, xs, x_masks=None):
         xs = xs.transpose(1, -1)  # (B, idim, Tmax)
@@ -72,6 +74,7 @@ class DurationPredictor(torch.nn.Module):
 
         # NOTE: calculate in log domain
         xs = self.linear(xs.transpose(1, -1)).squeeze(-1)  # (B, Tmax)
+        xs = self.lpf(xs)
 
         if x_masks is not None:
             xs = xs.masked_fill(x_masks, 0.0)

@@ -58,13 +58,17 @@ tts_conf:             # keyword arguments for the selected model
     energy_embed_dropout: 0.0                  # dropout rate after conv embedding layer for energy
     stop_gradient_from_energy_predictor: false # whether to stop the gradient from energy predictor to encoder
     lr_window_size: 16
-    lr_n_iter: 256
+    lr_n_iter: 64
     lr_mode: after
 
 # extra module for additional inputs
 pitch_extract: dio           # pitch extractor type
+pitch_extract_conf:
+    use_token_averaged_f0: false
 pitch_normalize: global_mvn  # normalizer for the pitch feature
 energy_extract: energy       # energy extractor type
+energy_extract_conf:
+    use_token_averaged_energy: false
 energy_normalize: global_mvn # normalizer for the energy feature
 
 ##########################################################
@@ -81,16 +85,17 @@ scheduler_conf:        # keyword arguments for selected scheduler
 ##########################################################
 #                OTHER TRAINING SETTING                  #
 ##########################################################
-num_iters_per_epoch: 800  # number of iterations per epoch
+batch_size: 160
+num_iters_per_epoch: 100  # number of iterations per epoch
 max_epoch: 1000           # number of epochs
 grad_clip: 1.0            # gradient clipping norm
 grad_noise: false         # whether to use gradient noise injection
-accum_grad: 8             # gradient accumulation
+accum_grad: 1             # gradient accumulation
 batch_bins: 3000000       # batch bins (feats_type=raw)
 batch_type: numel         # how to make batch
 sort_in_batch: descending # how to sort data in making batch
 sort_batch: descending    # how to sort created batches
-num_workers: 1            # number of workers of data loader
+num_workers: 4            # number of workers of data loader
 train_dtype: float32      # dtype in training
 log_interval: null        # log interval in iterations
 keep_nbest_models: 5      # number of models to keep
@@ -103,3 +108,5 @@ best_model_criterion:     # criterion to save the best models
 -   - train
     - loss
     - min
+
+use_wandb: true

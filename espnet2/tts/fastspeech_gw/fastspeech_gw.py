@@ -488,7 +488,9 @@ class FastSpeechGW(AbsTTS):
 
         # define criterions
         self.criterion = FastSpeechGWLoss(
-            use_masking=use_masking, use_weighted_masking=use_weighted_masking
+            use_masking=use_masking, 
+            use_weighted_masking=use_weighted_masking,
+            lr_mode=lr_mode
         )
 
     def forward(
@@ -497,12 +499,12 @@ class FastSpeechGW(AbsTTS):
         text_lengths: torch.Tensor,
         feats: torch.Tensor,
         feats_lengths: torch.Tensor,
-        durations: torch.Tensor,
-        durations_lengths: torch.Tensor,
         pitch: torch.Tensor,
         pitch_lengths: torch.Tensor,
         energy: torch.Tensor,
         energy_lengths: torch.Tensor,
+        durations: Optional[torch.Tensor] = None,
+        durations_lengths: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -654,10 +656,6 @@ class FastSpeechGW(AbsTTS):
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
-        
-        if self.lr_mode == 'after':
-            hs = gw.utils.interpolate(hs, ilens, olens)
-            d_masks = make_pad_mask(olens).to(xs.device)
             
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
@@ -667,22 +665,31 @@ class FastSpeechGW(AbsTTS):
             e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
+            
+        hs = torch.cat([p_outs,e_outs,hs],dim=-1)
 
-        if is_inference:
-            d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
-            # use prediction in inference
-            p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
-            e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
-        else:
-            d_outs = self.duration_predictor(hs, d_masks)
-            # use groundtruth in training
-            p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
-            e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
-        hs = hs + e_embs + p_embs
+        if self.lr_mode == 'after':
+            hs = gw.utils.interpolate(hs, ilens, olens)
+            d_masks = make_pad_mask(olens).to(xs.device)
+              
+        d_outs = self.duration_predictor(hs[...,2:], d_masks)  # (B, T_text)
         hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
         
         if self.lr_mode == 'before':
             hs = gw.utils.interpolate(hs, ilens, olens)
+            
+        p_outs,e_outs,hs = hs[...,:1],hs[...,1:2],hs[...,2:]
+
+        if is_inference:
+            # use prediction in inference
+            p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
+            e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
+            hs = hs + e_embs + p_embs
+        else:
+            # use groundtruth in training
+            p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
+            e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
+            hs = hs + e_embs + p_embs            
 
         # forward decoder
         h_masks = self._source_mask(olens)
