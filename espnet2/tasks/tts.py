@@ -25,6 +25,7 @@ from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.espnet_model import ESPnetTTSModel
 from espnet2.tts.fastspeech import FastSpeech
 from espnet2.tts.fastspeech2 import FastSpeech2
+from espnet2.tts.fastspeech_gw import FastSpeechGW
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
 from espnet2.tts.feats_extract.dio import Dio
 from espnet2.tts.feats_extract.energy import Energy
@@ -92,6 +93,7 @@ tts_choices = ClassChoices(
         transformer=Transformer,
         fastspeech=FastSpeech,
         fastspeech2=FastSpeech2,
+        fastspeech_gw=FastSpeechGW,
         prodiff=ProDiff,
         # NOTE(kan-bayashi): available only for inference
         vits=VITS,
