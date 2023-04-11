@@ -290,6 +290,39 @@ espnet2.tts.prodiff.loss
     :show-inheritance:
 
 
+.. _espnet2.tts.fastspeech_gw.__init__:
+
+espnet2.tts.fastspeech_gw.__init__
+----------------------------------
+
+.. automodule:: espnet2.tts.fastspeech_gw.__init__
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet2.tts.fastspeech_gw.loss:
+
+espnet2.tts.fastspeech_gw.loss
+------------------------------
+
+.. automodule:: espnet2.tts.fastspeech_gw.loss
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet2.tts.fastspeech_gw.fastspeech_gw:
+
+espnet2.tts.fastspeech_gw.fastspeech_gw
+---------------------------------------
+
+.. automodule:: espnet2.tts.fastspeech_gw.fastspeech_gw
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
 .. _espnet2.tts.utils.parallel_wavegan_pretrained_vocoder:
 
 espnet2.tts.utils.parallel_wavegan_pretrained_vocoder

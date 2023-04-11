@@ -1170,6 +1170,39 @@ espnet.nets.pytorch_backend.fastspeech.length_regulator
     :show-inheritance:
 
 
+.. _espnet.nets.pytorch_backend.fastspeech_gw.__init__:
+
+espnet.nets.pytorch_backend.fastspeech_gw.__init__
+--------------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.fastspeech_gw.__init__
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor:
+
+espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor
+------------------------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet.nets.pytorch_backend.fastspeech_gw.length_regulator:
+
+espnet.nets.pytorch_backend.fastspeech_gw.length_regulator
+----------------------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.fastspeech_gw.length_regulator
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
 .. _espnet.nets.pytorch_backend.streaming.window:
 
 espnet.nets.pytorch_backend.streaming.window
