@@ -49,5 +49,8 @@ class LengthRegulator(torch.nn.Module):
             Tensor: replicated input tensor based on durations (B, Tmax, D).
 
         """
+        return self._forward(xs, ds)
+    
+    def _forward(self, xs, ds):
         ys = gw.stgw.stgw(ds, xs, window_size=self.window_size, n_iter=self.n_iter)
         return ys

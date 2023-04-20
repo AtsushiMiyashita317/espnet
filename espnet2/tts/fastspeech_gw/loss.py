@@ -22,6 +22,8 @@ class FastSpeechGWLoss(torch.nn.Module):
         use_masking: bool = True, 
         use_weighted_masking: bool = False,
         lr_mode: str = 'after',
+        duration_predictor_prior: str = 'linear',
+        duration_predictor_lam: float = 1.0,
     ):
         """Initialize feed-forward Transformer loss module.
 
@@ -44,7 +46,11 @@ class FastSpeechGWLoss(torch.nn.Module):
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
-        self.duration_criterion = DurationPredictorLoss(reduction=reduction)
+        self.duration_criterion = DurationPredictorLoss(
+            reduction=reduction,
+            prior=duration_predictor_prior,
+            lam=duration_predictor_lam,
+        )
 
     def forward(
         self,
@@ -105,7 +111,7 @@ class FastSpeechGWLoss(torch.nn.Module):
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(d_outs, ds)
+        duration_loss = self.duration_criterion(d_outs, duration_masks)
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 

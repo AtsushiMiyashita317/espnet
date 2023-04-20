@@ -9,7 +9,9 @@
 import torch
 from gw.utils import LPF
 
-from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
+from espnet.nets.pytorch_backend.transformer.encoder import Encoder
+from espnet2.tts.fastspeech2.variance_predictor import VariancePredictor
+from espnet2.layers.stft import Stft
 
 
 class DurationPredictor(torch.nn.Module):
@@ -32,7 +34,32 @@ class DurationPredictor(torch.nn.Module):
     """
 
     def __init__(
-        self, idim, n_layers=2, n_chans=384, kernel_size=3, dropout_rate=0.1, offset=1.0, lpf_window_size=16,
+        self, 
+        idim,
+        predictor_type,
+        # for variance predictor
+        vp_n_layers=None, 
+        vp_n_chans=None, 
+        vp_kernel_size=None, 
+        vp_dropout_rate=None, 
+        # for transformer encoder
+        te_attention_dim=None,
+        te_attention_heads=None,
+        te_linear_units=None,
+        te_num_blocks=None,
+        te_input_layer=None,
+        te_dropout_rate=None,
+        te_positional_dropout_rate=None,
+        te_attention_dropout_rate=None,
+        te_pos_enc_class=None,
+        te_normalize_before=None,
+        te_concat_after=None,
+        te_positionwise_layer_type=None,
+        te_positionwise_conv_kernel_size=None,
+        # post process
+        use_lpf=False,
+        lpf_window_size=64,
+        scale=1e-1,
     ):
         """Initilize duration predictor module.
 
@@ -46,38 +73,49 @@ class DurationPredictor(torch.nn.Module):
 
         """
         super(DurationPredictor, self).__init__()
-        self.offset = offset
-        self.conv = torch.nn.ModuleList()
-        for idx in range(n_layers):
-            in_chans = idim if idx == 0 else n_chans
-            self.conv += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
-        self.linear = torch.nn.Linear(n_chans, 1)
-        self.lpf = LPF(lpf_window_size)
+        self.predictor_type = predictor_type
+        if predictor_type == 'variance_predictor':
+            self.predictor = VariancePredictor(
+                idim,
+                n_layers=vp_n_layers,
+                n_chans=vp_n_chans,
+                kernel_size=vp_kernel_size,
+                dropout_rate=vp_dropout_rate
+            )
+        elif predictor_type == 'transformer_encoder':
+            self.predictor = Encoder(
+                idim=0,
+                attention_dim=te_attention_dim,
+                attention_heads=te_attention_heads,
+                linear_units=te_linear_units,
+                num_blocks=te_num_blocks,
+                input_layer=te_input_layer,
+                dropout_rate=te_dropout_rate,
+                positional_dropout_rate=te_positional_dropout_rate,
+                attention_dropout_rate=te_attention_dropout_rate,
+                pos_enc_class=te_pos_enc_class,
+                normalize_before=te_normalize_before,
+                concat_after=te_concat_after,
+                positionwise_layer_type=te_positionwise_layer_type,
+                positionwise_conv_kernel_size=te_positionwise_conv_kernel_size,
+            )
+            self.linear = torch.nn.Linear(te_attention_dim, 1)
+        else:
+            raise ValueError()
+        self.use_lpf = use_lpf
+        if use_lpf:
+            self.lpf = LPF(lpf_window_size)
+        self.scale = scale
 
-    def _forward(self, xs, x_masks=None):
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
-        for f in self.conv:
-            xs = f(xs)  # (B, C, Tmax)
-
-        # NOTE: calculate in log domain
-        xs = self.linear(xs.transpose(1, -1)).squeeze(-1)  # (B, Tmax)
-        xs = self.lpf(xs)
-
-        if x_masks is not None:
-            xs = xs.masked_fill(x_masks, 0.0)
+    def _forward(self, xs, masks):
+        if self.predictor_type == 'variance_predictor':
+            xs = self.predictor(xs, masks).squeeze(-1)
+        elif self.predictor_type == 'transformer_encoder':
+            xs, masks = self.predictor(xs, masks.transpose(-2,-1))
+            xs = self.linear(xs).squeeze(-1)  # (B, Tmax)
+        if self.use_lpf:
+            xs = self.lpf(xs)
+        xs = xs*self.scale
 
         return xs
 
@@ -116,7 +154,12 @@ class DurationPredictorLoss(torch.nn.Module):
 
     """
 
-    def __init__(self, reduction="mean"):
+    def __init__(
+        self, 
+        reduction="mean",
+        prior='linear',
+        lam=1e-6,
+    ):
         """Initilize duration predictor loss module.
 
         Args:
@@ -125,8 +168,11 @@ class DurationPredictorLoss(torch.nn.Module):
 
         """
         super(DurationPredictorLoss, self).__init__()
+        self.reduction = reduction
+        self.prior = prior
+        self.lam = lam
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, masks):
         """Calculate forward propagation.
 
         Args:
@@ -137,6 +183,7 @@ class DurationPredictorLoss(torch.nn.Module):
             Tensor: loss value.
 
         """
-        return outputs.new_zeros(())
-
+        fs = torch.fft.rfft(outputs,dim=-1).abs().square()
+        c = torch.linspace(0,1,fs.size(-1),device=fs.device).square()
+        return self.lam*torch.mean(fs@c)
 

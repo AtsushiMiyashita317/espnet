@@ -89,10 +89,16 @@ class FastSpeechGW(AbsTTS):
         conformer_enc_kernel_size: int = 7,
         conformer_dec_kernel_size: int = 31,
         # duration predictor
+        duration_predictor_type: str = 'variance_predictor',
         duration_predictor_layers: int = 2,
         duration_predictor_chans: int = 384,
         duration_predictor_kernel_size: int = 3,
         duration_predictor_dropout_rate: float = 0.1,
+        duration_predictor_use_lpf: bool = False,
+        duration_predictor_lpf_window_size: int = 64,
+        duration_predictor_scale: float = 1e-1,
+        duration_predictor_prior: str = 'linear',
+        duration_predictor_lam: float = 1e-6,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -365,10 +371,30 @@ class FastSpeechGW(AbsTTS):
         # define duration predictor
         self.duration_predictor = DurationPredictor(
             idim=adim,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=duration_predictor_dropout_rate,
+            predictor_type=duration_predictor_type,
+            
+            vp_n_layers=duration_predictor_layers,
+            vp_n_chans=duration_predictor_chans,
+            vp_kernel_size=duration_predictor_kernel_size,
+            vp_dropout_rate=duration_predictor_dropout_rate,
+            
+            te_attention_dim=adim,
+            te_attention_heads=aheads,
+            te_linear_units=eunits,
+            te_num_blocks=duration_predictor_layers,
+            te_input_layer=None,
+            te_dropout_rate=transformer_enc_dropout_rate,
+            te_positional_dropout_rate=transformer_enc_positional_dropout_rate,
+            te_attention_dropout_rate=transformer_enc_attn_dropout_rate,
+            te_pos_enc_class=pos_enc_class,
+            te_normalize_before=encoder_normalize_before,
+            te_concat_after=encoder_concat_after,
+            te_positionwise_layer_type=positionwise_layer_type,
+            te_positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        
+            use_lpf=duration_predictor_use_lpf,
+            lpf_window_size=duration_predictor_lpf_window_size,
+            scale=duration_predictor_scale
         )
 
         # define pitch predictor
@@ -490,7 +516,9 @@ class FastSpeechGW(AbsTTS):
         self.criterion = FastSpeechGWLoss(
             use_masking=use_masking, 
             use_weighted_masking=use_weighted_masking,
-            lr_mode=lr_mode
+            lr_mode=lr_mode,
+            duration_predictor_prior=duration_predictor_prior,
+            duration_predictor_lam=duration_predictor_lam
         )
 
     def forward(
@@ -656,7 +684,18 @@ class FastSpeechGW(AbsTTS):
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
-            
+        
+        if self.lr_mode == 'before':
+            d_outs = self.duration_predictor(hs, d_masks)  # (B, T_text)
+            hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
+        
+        hs = gw.utils.interpolate(hs, ilens, olens)
+        d_masks = make_pad_mask(olens).to(xs.device)      
+        
+        if self.lr_mode == 'after':
+            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text)
+            hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
+                    
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
@@ -665,20 +704,6 @@ class FastSpeechGW(AbsTTS):
             e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
-            
-        hs = torch.cat([p_outs,e_outs,hs],dim=-1)
-
-        if self.lr_mode == 'after':
-            hs = gw.utils.interpolate(hs, ilens, olens)
-            d_masks = make_pad_mask(olens).to(xs.device)
-              
-        d_outs = self.duration_predictor(hs[...,2:], d_masks)  # (B, T_text)
-        hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
-        
-        if self.lr_mode == 'before':
-            hs = gw.utils.interpolate(hs, ilens, olens)
-            
-        p_outs,e_outs,hs = hs[...,:1],hs[...,1:2],hs[...,2:]
 
         if is_inference:
             # use prediction in inference
@@ -712,7 +737,7 @@ class FastSpeechGW(AbsTTS):
         self,
         text: torch.Tensor,
         feats: Optional[torch.Tensor] = None,
-        durations: int = None,
+        durations: int = 800,
         spembs: torch.Tensor = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
