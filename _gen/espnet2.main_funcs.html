@@ -189,27 +189,6 @@
 <h1>espnet2.main_funcs package<a class="headerlink" href="#espnet2-main-funcs-package" title="Permalink to this headline">¶</a></h1>
 <section id="espnet2-main-funcs-calculate-all-attentions-1">
 <span id="espnet2-main-funcs-calculate-all-attentions"></span><h2>espnet2.main_funcs.calculate_all_attentions<a class="headerlink" href="#espnet2-main-funcs-calculate-all-attentions-1" title="Permalink to this headline">¶</a></h2>
-<span class="target" id="module-espnet2.main_funcs.calculate_all_attentions"></span><dl class="function">
-<dt id="espnet2.main_funcs.calculate_all_attentions.calculate_all_attentions">
-<code class="sig-prename descclassname">espnet2.main_funcs.calculate_all_attentions.</code><code class="sig-name descname">calculate_all_attentions</code><span class="sig-paren">(</span><em class="sig-param">model: espnet2.train.abs_espnet_model.AbsESPnetModel, batch: Dict[str, torch.Tensor]</em><span class="sig-paren">)</span> &#x2192; Dict[str, List[torch.Tensor]]<a class="reference internal" href="../_modules/espnet2/main_funcs/calculate_all_attentions.html#calculate_all_attentions"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet2.main_funcs.calculate_all_attentions.calculate_all_attentions" title="Permalink to this definition">¶</a></dt>
-<dd><p>Derive the outputs from the all attention layers</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>model</strong> – </p></li>
-<li><p><strong>batch</strong> – same as forward</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>A dict of a list of tensor.
-key_names x batch x (D1, D2, …)</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>return_dict</p>
-</dd>
-</dl>
-</dd></dl>
-
 </section>
 <section id="espnet2-main-funcs-collect-stats-1">
 <span id="espnet2-main-funcs-collect-stats"></span><h2>espnet2.main_funcs.collect_stats<a class="headerlink" href="#espnet2-main-funcs-collect-stats-1" title="Permalink to this headline">¶</a></h2>
