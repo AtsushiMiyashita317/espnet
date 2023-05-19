@@ -95,6 +95,7 @@ class FastSpeechGW(AbsTTS):
         duration_predictor_kernel_size: int = 3,
         duration_predictor_dropout_rate: float = 0.1,
         duration_predictor_scale: float = 1.0,
+        duration_predictor_odim: int = 1,
         # energy predictor
         energy_predictor_variational: bool = False,
         energy_predictor_layers: int = 2,
@@ -137,7 +138,8 @@ class FastSpeechGW(AbsTTS):
         use_weighted_masking: bool = False,
         # length regulator
         lr_sr: int = 1,
-        lr_mode: str = 'after'
+        lr_mode: str = 'after',
+        l1_lambda: float = 1.0,
     ):
         """Initialize FastSpeech2 module.
 
@@ -372,6 +374,7 @@ class FastSpeechGW(AbsTTS):
         self.duration_predictor = duration_predictor_class(
             idim=adim,
             tdim=idim,
+            odim=duration_predictor_odim,
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             n_latent=duration_predictor_latent,
@@ -385,6 +388,7 @@ class FastSpeechGW(AbsTTS):
         self.pitch_predictor = pitch_predictor_class(
             idim=adim,
             tdim=idim,
+            odim=1,
             n_layers=pitch_predictor_layers,
             n_chans=pitch_predictor_chans,
             n_latent=pitch_predictor_latent,
@@ -407,6 +411,7 @@ class FastSpeechGW(AbsTTS):
         self.energy_predictor = energy_predictor_class(
             idim=adim,
             tdim=idim,
+            odim=1,
             n_layers=energy_predictor_layers,
             n_chans=energy_predictor_chans,
             n_latent=energy_predictor_latent,
@@ -505,7 +510,8 @@ class FastSpeechGW(AbsTTS):
             lr_mode=lr_mode,
             duration_predictor_variational=duration_predictor_variational,
             pitch_predictor_variational=pitch_predictor_variational,
-            energy_predictor_variational=energy_predictor_variational
+            energy_predictor_variational=energy_predictor_variational,
+            l1_lambda=l1_lambda
         )
 
     def forward(

@@ -17,7 +17,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 class FastSpeech2Loss(torch.nn.Module):
     """Loss function module for FastSpeech2."""
 
-    def __init__(self, use_masking: bool = True, use_weighted_masking: bool = False):
+    def __init__(self, use_masking: bool = True, use_weighted_masking: bool = False, token_average: bool = True):
         """Initialize feed-forward Transformer loss module.
 
         Args:
@@ -31,8 +31,10 @@ class FastSpeech2Loss(torch.nn.Module):
         super().__init__()
 
         assert (use_masking != use_weighted_masking) or not use_masking
+        assert token_average or not use_weighted_masking
         self.use_masking = use_masking
         self.use_weighted_masking = use_weighted_masking
+        self.token_average = True
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
@@ -86,7 +88,10 @@ class FastSpeech2Loss(torch.nn.Module):
             duration_masks = make_non_pad_mask(ilens).to(ys.device)
             d_outs = d_outs.masked_select(duration_masks)
             ds = ds.masked_select(duration_masks)
-            pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ys.device)
+            if self.token_average:
+                pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ys.device)
+            else:
+                pitch_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
             p_outs = p_outs.masked_select(pitch_masks)
             e_outs = e_outs.masked_select(pitch_masks)
             ps = ps.masked_select(pitch_masks)

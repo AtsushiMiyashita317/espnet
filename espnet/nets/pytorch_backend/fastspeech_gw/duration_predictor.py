@@ -60,6 +60,7 @@ class DurationPredictor(torch.nn.Module):
         use_lpf=False,
         lpf_window_size=64,
         scale=1e-1,
+        cumsum=False
     ):
         """Initilize duration predictor module.
 
@@ -106,6 +107,7 @@ class DurationPredictor(torch.nn.Module):
         if use_lpf:
             self.lpf = LPF(lpf_window_size)
         self.scale = scale
+        self.cumsum = cumsum
 
     def _forward(self, xs, masks):
         if self.predictor_type == 'variance_predictor':
@@ -116,6 +118,8 @@ class DurationPredictor(torch.nn.Module):
         if self.use_lpf:
             xs = self.lpf(xs)
         xs = xs*self.scale
+        if self.cumsum:
+            xs = xs.cumsum(-1)
 
         return xs
 

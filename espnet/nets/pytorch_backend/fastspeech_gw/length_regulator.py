@@ -26,7 +26,7 @@ class LengthRegulator(torch.nn.Module):
 
     """
 
-    def __init__(self, window_size=16, n_iter=256):
+    def __init__(self, window_size=16, n_iter=256, sr=4):
         """Initilize length regulator module.
 
         Args:
@@ -36,6 +36,7 @@ class LengthRegulator(torch.nn.Module):
         super().__init__()
         self.window_size = window_size
         self.n_iter = n_iter
+        self.sr = sr
 
     def forward(self, xs, ds):
         """Calculate forward propagation.
@@ -52,5 +53,9 @@ class LengthRegulator(torch.nn.Module):
         return self._forward(xs, ds)
     
     def _forward(self, xs, ds):
-        ys = gw.stgw.stgw(ds, xs, window_size=self.window_size, n_iter=self.n_iter)
+        # ys = gw.stgw.stgw(ds, xs, window_size=self.window_size, n_iter=self.n_iter)
+        if ds.ndim == 3:
+            ds = torch.cat([ds[...,:1] + 0j, ds[...,1::2] + 1j*ds[...,2::2]], dim=-1)
+            ds = gw.GW.spectrogram_to_signal(ds)
+        ys = gw.GW.map(ds,sr=self.sr,pad=16)@xs
         return ys

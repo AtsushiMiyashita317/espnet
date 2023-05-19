@@ -106,23 +106,18 @@ def calculate_all_attentions(
                 att_w = torch.exp(w).detach().cpu()
                 outputs.setdefault(name, []).append(att_w)
             elif isinstance(module, LengthRegulator):
-                logging.info('GWLR calculate attention:')
                 xs, ds = input
-                logging.info(f'xs.size() = {xs.size().__str__()}')
-                logging.info(f'ds.size() = {ds.size().__str__()}')
-                logging.info(f'output.size() = {output.size().__str__()}')
                 outputs[name] = module._forward(
                     torch.eye(
-                        ds.size(-1),
+                        ds.size(1),
                         device=ds.device
                     ).unsqueeze(0).expand(
                         ds.size(0),
-                        ds.size(-1),
-                        ds.size(-1)
+                        ds.size(1),
+                        ds.size(1)
                     ),
                     ds
                 ).detach().cpu()
-                logging.info('GWLR calculate attention: Done.')
                 
         handle = modu.register_forward_hook(hook)
         handles[name] = handle

@@ -3,7 +3,7 @@
 
 """Fastspeech2 related loss module for ESPnet2."""
 
-from typing import Tuple, Union
+from typing import Dict
 
 import torch
 from typeguard import check_argument_types
@@ -20,7 +20,8 @@ class FastSpeechGWLoss(torch.nn.Module):
         lr_mode: str = 'after',
         duration_predictor_variational: bool = True,
         pitch_predictor_variational: bool = False,
-        energy_predictor_variational: bool = False
+        energy_predictor_variational: bool = False,
+        l1_lambda: float = 1.0,
     ):
         """Initialize feed-forward Transformer loss module.
 
@@ -38,6 +39,7 @@ class FastSpeechGWLoss(torch.nn.Module):
         self.duration_predictor_variational = duration_predictor_variational
         self.pitch_predictor_variational = pitch_predictor_variational
         self.energy_predictor_variational = energy_predictor_variational
+        self.l1_lambda = l1_lambda
         
         # define criterions
         reduction = "mean"
@@ -49,16 +51,16 @@ class FastSpeechGWLoss(torch.nn.Module):
         self,
         after_outs: torch.Tensor,
         before_outs: torch.Tensor,
-        d_outs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        p_outs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        e_outs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        d_outs: Dict[str, torch.Tensor],
+        p_outs: Dict[str, torch.Tensor],
+        e_outs: Dict[str, torch.Tensor],
         xs: torch.Tensor,
         ys: torch.Tensor,
         ps: torch.Tensor,
         es: torch.Tensor,
         ilens: torch.Tensor,
         olens: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Dict[str, torch.Tensor]:
         """Calculate forward propagation.
 
         Args:
@@ -98,30 +100,33 @@ class FastSpeechGWLoss(torch.nn.Module):
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
         if self.duration_predictor_variational:
-            rc_loss, kl_loss = self.vae_criterion(xs, **d_outs, masks=duration_masks)
+            rc_loss, kl_loss_z, kl_loss_v = self.vae_criterion(xs, **d_outs, masks=duration_masks)
             duration_loss = dict(
-                duration_reconstruction=rc_loss/odim,
-                duration_kl_divergence=kl_loss/odim,
+                duration_reconstruction=rc_loss/odim/self.l1_lambda,
+                duration_kl_divergence=kl_loss_v/odim/self.l1_lambda,
+                duration_z_kl_divergence=kl_loss_z/odim/self.l1_lambda,
             )
         else:
             duration_loss = dict()
         if self.pitch_predictor_variational:
             mse_loss = self.mse_criterion(p_outs['output'], ps)
-            rc_loss, kl_loss = self.vae_criterion(xs, **p_outs, masks=pitch_masks)
+            rc_loss, kl_loss_z, kl_loss_v  = self.vae_criterion(xs, **p_outs, masks=pitch_masks)
             pitch_loss = dict(
                 pitch_loss=mse_loss,
-                pitch_reconstruction=rc_loss/odim,
-                pitch_kl_divergence=kl_loss/odim
+                pitch_reconstruction=rc_loss/odim/self.l1_lambda,
+                pitch_kl_divergence=kl_loss_v/odim/self.l1_lambda,
+                pitch_z_kl_divergence=kl_loss_z/odim/self.l1_lambda
             )
         else:
             pitch_loss = dict(pitch_loss=self.mse_criterion(p_outs['output'], ps))
         if self.energy_predictor_variational:
             mse_loss = self.mse_criterion(e_outs[0], es)
-            rc_loss, kl_loss = self.vae_criterion(xs, **e_outs, masks=pitch_masks)
+            rc_loss, kl_loss_z, kl_loss_v = self.vae_criterion(xs, **e_outs, masks=pitch_masks)
             energy_loss = dict(
                 energy_loss=mse_loss,
-                energy_reconstruction=rc_loss/odim,
-                energy_kl_divergence=kl_loss/odim
+                energy_reconstruction=rc_loss/odim/self.l1_lambda,
+                energy_kl_divergence=kl_loss_v/odim/self.l1_lambda,
+                energy_z_kl_divergence=kl_loss_z/odim/self.l1_lambda
             )
         else:
             energy_loss = dict(energy_loss=self.mse_criterion(e_outs['output'], es))

@@ -48,10 +48,10 @@ class VariationalVariancePredictor(torch.nn.Module):
         assert check_argument_types()
         super().__init__()
         
-        self.encoder = torch.nn.ModuleList()
+        self.encoder1 = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = idim if idx == 0 else n_chans
-            self.encoder += [
+            self.encoder1 += [
                 torch.nn.Sequential(
                     torch.nn.Conv1d(
                         in_chans,
@@ -67,10 +67,41 @@ class VariationalVariancePredictor(torch.nn.Module):
                 )
             ]
         
-        self.decoder = torch.nn.ModuleList()
+        self.decoder1 = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = n_latent if idx == 0 else n_chans
-            self.decoder += [
+            # self.decoder1 += [
+            #     torch.nn.Sequential(
+            #         torch.nn.Conv1d(
+            #             in_chans,
+            #             n_chans,
+            #             kernel_size,
+            #             stride=1,
+            #             padding=(kernel_size - 1) // 2,
+            #             bias=bias,
+            #         ),
+            #         torch.nn.ReLU(),
+            #         LayerNorm(n_chans, dim=1),
+            #         torch.nn.Dropout(dropout_rate),
+            #     )
+            # ]
+            self.decoder1 += [
+                torch.nn.Sequential(
+                    torch.nn.Linear(
+                        in_chans,
+                        n_chans,
+                        bias=bias,
+                    ),
+                    torch.nn.ReLU(),
+                    LayerNorm(n_chans, dim=2),
+                    torch.nn.Dropout(dropout_rate),
+                )
+            ]
+            
+        self.encoder2 = torch.nn.ModuleList()
+        for idx in range(n_layers):
+            in_chans = n_latent if idx == 0 else n_chans
+            self.encoder2 += [
                 torch.nn.Sequential(
                     torch.nn.Conv1d(
                         in_chans,
@@ -86,29 +117,10 @@ class VariationalVariancePredictor(torch.nn.Module):
                 )
             ]
             
-        self.converter = torch.nn.ModuleList()
-        for idx in range(n_layers):
-            in_chans = n_latent if idx == 0 else n_chans
-            self.converter += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                        bias=bias,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
-            
-        self.inverser = torch.nn.ModuleList()
+        self.decoder2 = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = odim if idx == 0 else n_chans
-            self.inverser += [
+            self.decoder2 += [
                 torch.nn.Sequential(
                     torch.nn.Conv1d(
                         in_chans,
@@ -124,10 +136,10 @@ class VariationalVariancePredictor(torch.nn.Module):
                 )
             ]
         
-        self.encoder_linear = torch.nn.Linear(n_chans, 2*n_latent)
-        self.decoder_linear = torch.nn.Linear(n_chans, tdim)
-        self.converter_linear = torch.nn.Linear(n_chans, odim)
-        self.inverser_linear = torch.nn.Linear(n_chans, 2*n_latent)
+        self.encoder1_linear = torch.nn.Linear(n_chans, 2*n_latent)
+        self.decoder1_linear = torch.nn.Linear(n_chans, tdim)
+        self.encoder2_linear = torch.nn.Linear(n_chans, 2*odim)
+        self.decoder2_linear = torch.nn.Linear(n_chans, 2*n_latent)
 
     def forward(self, xs: torch.Tensor, x_masks: torch.Tensor = None) -> torch.Tensor:
         """Calculate forward propagation.
@@ -143,9 +155,9 @@ class VariationalVariancePredictor(torch.nn.Module):
         
         hs = xs  # (B, Tmax, idim)
         hs = hs.transpose(1, 2)  # (B, idim, Tmax)
-        for f in self.encoder:
+        for f in self.encoder1:
             hs = f(hs)  # (B, C, Tmax)
-        hs = self.encoder_linear(hs.transpose(1, 2))  # (B, Tmax, Z)
+        hs = self.encoder1_linear(hs.transpose(1, 2))  # (B, Tmax, Z)
         
         mu_z = hs[:,:,0::2]
         ln_var_z = hs[:,:,1::2]
@@ -155,19 +167,20 @@ class VariationalVariancePredictor(torch.nn.Module):
             zs = zs.masked_fill(x_masks, 0.0)
         
         hs = zs
-        hs = hs.transpose(1, 2)  # (B, Z, Tmax)
-        for f in self.decoder:
+        # hs = hs.transpose(1, 2)  # (B, Z, Tmax)
+        for f in self.decoder1:
             hs = f(hs)  # (B, C, Tmax)
-        ys = self.decoder_linear(hs.transpose(1, 2))  # (B, Tmax, idim)
+        # ys = self.decoder1_linear(hs.transpose(1, 2))  # (B, Tmax, idim)
+        ys = self.decoder1_linear(hs)  # (B, Tmax, idim)
 
         if x_masks is not None:
             ys = ys.masked_fill(x_masks, 0.0)
             
         hs = zs
         hs = hs.transpose(1, 2)  # (B, Z, Tmax)
-        for f in self.converter:
+        for f in self.encoder2:
             hs = f(hs)  # (B, C, Tmax)
-        hs = self.converter_linear(hs.transpose(1, 2))  # (B, Tmax, odim)
+        hs = self.encoder2_linear(hs.transpose(1, 2))  # (B, Tmax, odim)
         
         mu_v = hs[:,:,0::2]
         ln_var_v = hs[:,:,1::2]
@@ -178,16 +191,13 @@ class VariationalVariancePredictor(torch.nn.Module):
             
         hs = vs
         hs = hs.transpose(1, 2)  # (B, odim, Tmax)
-        for f in self.inverser:
+        for f in self.decoder2:
             hs = f(hs)  # (B, C, Tmax)
-        hs = self.inverser_linear(hs.transpose(1, 2))  # (B, Tmax, Z)
+        hs = self.decoder2_linear(hs.transpose(1, 2))  # (B, Tmax, Z)
         
         mu_w = hs[:,:,0::2]
         ln_var_w = hs[:,:,1::2]
-
-        if x_masks is not None:
-            ws = ws.masked_fill(x_masks, 0.0)
-            
+    
         return dict(
             output=vs, 
             reconstruct=ys, 
@@ -203,7 +213,7 @@ class VAELoss(torch.nn.Module):
     """Loss function module for variance predictor.
     """
 
-    def __init__(self, reduction="mean",):
+    def __init__(self, reduction="mean", mu=0, log_var=0):
         """Initilize duration predictor loss module.
 
         Args:
@@ -213,21 +223,24 @@ class VAELoss(torch.nn.Module):
         super(VAELoss, self).__init__()
         self.recons = torch.nn.CrossEntropyLoss(reduction='none')
         self.reduction = reduction
+        self.register_buffer('mu', torch.tensor(mu))
+        self.register_buffer('log_var', torch.tensor(log_var))
         
     def _reconstruction_loss(self, pred, target, masks):
         recons = self.recons(pred.transpose(-2,-1), target)
         if masks is not None:
-            recons = recons.masked_fill(masks, 0.0)
+            recons = recons.masked_select(masks)
         if self.reduction == 'sum':
             recons = recons.sum()
         elif self.reduction == 'mean':
             recons = recons.mean()
         return recons
     
-    def _kl_divergence_loss(self, mu, ln_var, masks):
-        kl_loss = -0.5*(1 + ln_var - ln_var.exp() - mu.square())
+    def _kl_divergence_loss(self, mu_q, log_var_q, mu_p, log_var_p, masks=None):
+        kl_loss = 0.5 * (log_var_p - log_var_q + torch.exp(log_var_q - log_var_p) + torch.square(mu_q - mu_p)*torch.exp(-log_var_p) - 1)
+    
         if masks is not None:
-            kl_loss = kl_loss.masked_fill(masks.unsqueeze(-1), 0.0)
+            kl_loss = kl_loss.masked_select(masks.unsqueeze(-1))
         kl_loss = kl_loss.sum(-1)
         if self.reduction == 'sum':
             kl_loss = kl_loss.sum()
@@ -236,7 +249,7 @@ class VAELoss(torch.nn.Module):
         return kl_loss
         
 
-    def forward(self, input, reconstruct, mu, ln_var, masks, **kwargs):
+    def forward(self, input, reconstruct, mu_z, ln_var_z, mu_v, ln_var_v, mu_w, ln_var_w, masks, **kwargs):
         """Calculate forward propagation.
 
         Args:
@@ -247,9 +260,10 @@ class VAELoss(torch.nn.Module):
             Tensor: loss value.
 
         """
-        rc_loss = self._reconstruction_loss(reconstruct, input, masks)
-        kl_loss = self._kl_divergence_loss(mu, ln_var, masks)
-        return rc_loss, kl_loss
+        rc_loss = self._reconstruction_loss(reconstruct, input, masks=masks)
+        kl_loss_z = self._kl_divergence_loss(mu_z, ln_var_z, mu_w, ln_var_w, masks=masks)
+        kl_loss_v = self._kl_divergence_loss(mu_v, ln_var_v, self.mu, self.log_var,masks=masks)
+        return rc_loss, kl_loss_z, kl_loss_v
 
 
 class VariancePredictor(torch.nn.Module):
@@ -267,6 +281,7 @@ class VariancePredictor(torch.nn.Module):
         self,
         idim: int,
         tdim=None,
+        odim=None,
         n_layers: int = 2,
         n_chans: int = 384,
         n_latent: int = None,

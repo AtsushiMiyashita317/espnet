@@ -128,6 +128,7 @@ class FastSpeech2(AbsTTS):
         init_dec_alpha: float = 1.0,
         use_masking: bool = False,
         use_weighted_masking: bool = False,
+        token_average: bool = True,
     ):
         """Initialize FastSpeech2 module.
 
@@ -476,8 +477,10 @@ class FastSpeech2(AbsTTS):
 
         # define criterions
         self.criterion = FastSpeech2Loss(
-            use_masking=use_masking, use_weighted_masking=use_weighted_masking
+            use_masking=use_masking, use_weighted_masking=use_weighted_masking, token_average=token_average
         )
+        
+        self.token_average = True
 
     def forward(
         self,
@@ -642,7 +645,19 @@ class FastSpeech2(AbsTTS):
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
-
+        
+        if is_inference:
+            d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
+        else:
+            d_outs = self.duration_predictor(hs, d_masks)
+        
+        if not self.token_average:
+            if is_inference:
+                hs = self.length_regulator(hs, d_outs, alpha)  # (B, T_feats, adim)
+            else:
+                hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
+            d_masks = make_pad_mask(olens).to(xs.device)
+        
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
@@ -651,21 +666,23 @@ class FastSpeech2(AbsTTS):
             e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
-
+     
         if is_inference:
-            d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
             # use prediction in inference
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
             hs = hs + e_embs + p_embs
-            hs = self.length_regulator(hs, d_outs, alpha)  # (B, T_feats, adim)
         else:
-            d_outs = self.duration_predictor(hs, d_masks)
             # use groundtruth in training
             p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
             hs = hs + e_embs + p_embs
-            hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
+
+        if self.token_average:
+            if is_inference:
+                hs = self.length_regulator(hs, d_outs, alpha)  # (B, T_feats, adim)
+            else:
+                hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
 
         # forward decoder
         if olens is not None and not is_inference:

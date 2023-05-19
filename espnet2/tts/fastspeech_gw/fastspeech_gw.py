@@ -99,6 +99,7 @@ class FastSpeechGW(AbsTTS):
         duration_predictor_scale: float = 1e-1,
         duration_predictor_prior: str = 'linear',
         duration_predictor_lam: float = 1e-6,
+        duration_predictor_cumsum: bool = False,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -138,6 +139,7 @@ class FastSpeechGW(AbsTTS):
         # length regulator
         lr_window_size: int = 16,
         lr_n_iter: int = 256,
+        lr_sr: int = 4,
         lr_mode: str = 'after'
     ):
         """Initialize FastSpeech2 module.
@@ -394,7 +396,8 @@ class FastSpeechGW(AbsTTS):
         
             use_lpf=duration_predictor_use_lpf,
             lpf_window_size=duration_predictor_lpf_window_size,
-            scale=duration_predictor_scale
+            scale=duration_predictor_scale,
+            cumsum=duration_predictor_cumsum
         )
 
         # define pitch predictor
@@ -439,6 +442,7 @@ class FastSpeechGW(AbsTTS):
         self.length_regulator = LengthRegulator(
             window_size=lr_window_size,
             n_iter=lr_n_iter,
+            sr=lr_sr
         )
         self.lr_mode = lr_mode
 
@@ -686,7 +690,7 @@ class FastSpeechGW(AbsTTS):
         d_masks = make_pad_mask(ilens).to(xs.device)
         
         if self.lr_mode == 'before':
-            d_outs = self.duration_predictor(hs, d_masks)  # (B, T_text)
+            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text)
             hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
         
         hs = gw.utils.interpolate(hs, ilens, olens)
@@ -737,7 +741,7 @@ class FastSpeechGW(AbsTTS):
         self,
         text: torch.Tensor,
         feats: Optional[torch.Tensor] = None,
-        durations: int = 800,
+        durations: Optional[torch.Tensor] = None,
         spembs: torch.Tensor = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -777,14 +781,14 @@ class FastSpeechGW(AbsTTS):
 
         # setup batch axis
         ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
-        olens = torch.tensor([durations], dtype=torch.long, device=x.device)
+        olens = torch.tensor([feats.size(-2)], dtype=torch.long, device=x.device)
         xs, ys = x.unsqueeze(0), None
         if y is not None:
             ys = y.unsqueeze(0)
         if spemb is not None:
             spembs = spemb.unsqueeze(0)
 
-        if use_teacher_forcing:
+        if use_teacher_forcing and False:
             # use groundtruth of duration, pitch, and energy
             ds, ps, es = None, p.unsqueeze(0), e.unsqueeze(0)
             _, outs, d_outs, p_outs, e_outs = self._forward(
@@ -812,11 +816,14 @@ class FastSpeechGW(AbsTTS):
                 alpha=alpha,
             )  # (1, T_feats, odim)
 
+        att_w = self.length_regulator(torch.eye(d_outs.size(-1), device=d_outs.device).unsqueeze(0), d_outs)
+
         return dict(
             feat_gen=outs[0],
             duration=d_outs[0],
             pitch=p_outs[0],
             energy=e_outs[0],
+            att_w=att_w[0]
         )
 
     def _integrate_with_spk_embed(
