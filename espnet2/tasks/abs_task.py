@@ -329,7 +329,13 @@ class AbsTask(ABC):
             "This option makes sense only when attention-based model. "
             "We can also disable the attention plot by setting it 0",
         )
-
+        group.add_argument(
+            "--num_feats_plot",
+            type=int,
+            default=3,
+            help="The number images to plot the outputs from model. "
+            "We can also disable the feats plot by setting it 0",
+        )
         group = parser.add_argument_group("distributed training related")
         group.add_argument(
             "--dist_backend",
@@ -1311,6 +1317,15 @@ class AbsTask(ABC):
                 )
             else:
                 plot_attention_iter_factory = None
+                
+            if args.num_feats_plot != 0:
+                plot_feats_iter_factory = cls.build_iter_factory(
+                    args=args,
+                    distributed_option=distributed_option,
+                    mode="plot_feats",
+                )
+            else:
+                plot_feats_iter_factory = None
 
             # 8. Start training
             if args.use_wandb:
@@ -1363,6 +1378,7 @@ class AbsTask(ABC):
                 train_iter_factory=train_iter_factory,
                 valid_iter_factory=valid_iter_factory,
                 plot_attention_iter_factory=plot_attention_iter_factory,
+                plot_feats_iter_factory=plot_feats_iter_factory,
                 trainer_options=trainer_options,
                 distributed_option=distributed_option,
             )
@@ -1430,6 +1446,22 @@ class AbsTask(ABC):
             batch_size = 1
             batch_bins = 0
             num_batches = args.num_att_plot
+            max_cache_fd = args.max_cache_fd
+            # num_att_plot should be a few sample ~ 3, so cache all data.
+            max_cache_size = np.inf if args.max_cache_size != 0.0 else 0.0
+            # always False because plot_attention performs on RANK0
+            distributed = False
+            num_iters_per_epoch = None
+            train = False
+        elif mode == "plot_feats":
+            preprocess_fn = cls.build_preprocess_fn(args, train=False)
+            collate_fn = cls.build_collate_fn(args, train=False)
+            data_path_and_name_and_type = args.valid_data_path_and_name_and_type
+            shape_files = args.valid_shape_file
+            batch_type = "unsorted"
+            batch_size = 1
+            batch_bins = 0
+            num_batches = args.num_feats_plot
             max_cache_fd = args.max_cache_fd
             # num_att_plot should be a few sample ~ 3, so cache all data.
             max_cache_size = np.inf if args.max_cache_size != 0.0 else 0.0

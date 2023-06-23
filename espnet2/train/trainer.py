@@ -18,7 +18,7 @@ from typeguard import check_argument_types
 
 from espnet2.iterators.abs_iter_factory import AbsIterFactory
 from espnet2.main_funcs.average_nbest_models import average_nbest_models
-from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions
+from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions, calculate_feats
 from espnet2.schedulers.abs_scheduler import (
     AbsBatchStepScheduler,
     AbsEpochStepScheduler,
@@ -167,6 +167,7 @@ class Trainer:
         train_iter_factory: AbsIterFactory,
         valid_iter_factory: AbsIterFactory,
         plot_attention_iter_factory: Optional[AbsIterFactory],
+        plot_feats_iter_factory: Optional[AbsIterFactory],
         trainer_options,
         distributed_option: DistributedOption,
     ) -> None:
@@ -319,6 +320,17 @@ class Trainer:
                             reporter=sub_reporter,
                             options=trainer_options,
                         )
+                if plot_feats_iter_factory is not None:
+                    with reporter.observe("feats_plot") as sub_reporter:
+                        cls.plot_feats(
+                            model=model,
+                            output_dir=output_dir / "feats",
+                            summary_writer=train_summary_writer,
+                            iterator=plot_feats_iter_factory.build_iter(iepoch),
+                            reporter=sub_reporter,
+                            options=trainer_options,
+                        )
+
 
             # 2. LR Scheduler step
             for scheduler in schedulers:
@@ -866,4 +878,90 @@ class Trainer:
                         import wandb
 
                         wandb.log({f"attention plot/{k}_{id_}": wandb.Image(fig)})
+            reporter.next()
+
+    @classmethod
+    @torch.no_grad()
+    def plot_feats(
+        cls,
+        model: torch.nn.Module,
+        output_dir: Optional[Path],
+        summary_writer,
+        iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
+        reporter: SubReporter,
+        options: TrainerOptions,
+    ) -> None:
+        assert check_argument_types()
+        import matplotlib
+
+        ngpu = options.ngpu
+        no_forward_run = options.no_forward_run
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+
+        model.eval()
+        for ids, batch in iterator:
+            assert isinstance(batch, dict), type(batch)
+            assert len(next(iter(batch.values()))) == len(ids), (
+                len(next(iter(batch.values()))),
+                len(ids),
+            )
+
+            batch["utt_id"] = ids
+
+            batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
+            if no_forward_run:
+                continue
+
+            # 1. Forwarding model and gathering all attentions
+            #    calculate_all_attentions() uses single gpu only.
+            feats_list = calculate_feats(model, batch)
+
+            # 2. Plot attentions: This part is slow due to matplotlib
+            assert len(feats_list) == len(ids), (len(feats_list), len(ids))
+            for id_, feats in zip(ids, feats_list):
+                if isinstance(feats, torch.Tensor):
+                    feats = feats.detach().cpu().numpy()
+
+                if feats.ndim == 2:
+                    feats = feats[None]
+                elif feats.ndim != 3:
+                    raise RuntimeError(f"Must be 2 or 3 dimension: {feats.ndim} {feats.shape}")
+
+                w, h = plt.figaspect(feats.shape[0]*feats.shape[2]/feats.shape[1])
+                fig = plt.Figure(
+                    figsize=(
+                        w,
+                        2*h,
+                    )
+                )
+                fig.suptitle(f"{id_}")
+                axes = fig.subplots(feats.shape[0], 1)
+                if len(feats) == 1:
+                    axes = [axes]
+                for ax, feat in zip(axes, feats):
+                    ax.imshow(feat.T.astype(np.float32), aspect="auto", origin='lower')
+                    ax.set_xlabel("Time")
+                    ax.set_ylabel("Frequency")
+                    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+                    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+                fig.set_tight_layout({"rect": [0, 0.03, 1, 0.95]})
+                
+                if output_dir is not None:
+                    p = output_dir / id_ / f"{reporter.get_epoch()}ep.png"
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    fig.savefig(p)
+
+                if summary_writer is not None:
+                    summary_writer.add_figure(
+                        f"{id_}", fig, reporter.get_epoch()
+                    )
+
+                if options.use_wandb:
+                    import wandb
+
+                    wandb.log({f"feats plot/{id_}": wandb.Image(fig)})
             reporter.next()

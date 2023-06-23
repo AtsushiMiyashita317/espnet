@@ -23,10 +23,9 @@ from espnet2.train.preprocessor import CommonPreprocessor
 from espnet2.train.trainer import Trainer
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.espnet_model import ESPnetTTSModel
-from espnet2.tts.fastspeech import FastSpeech
+from espnet2.tts.fastspeech import FastSpeech,VNART
 from espnet2.tts.fastspeech2 import FastSpeech2
-from espnet2.tts.fastspeech_gw import FastSpeechGW
-from espnet2.tts.fastspeech_gw_variational import FastSpeechGW as FastSpeechGWV
+from espnet2.tts.fastspeech_gw import FastSpeechGW, VariationalFastSpeechGW
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
 from espnet2.tts.feats_extract.dio import Dio
 from espnet2.tts.feats_extract.energy import Energy
@@ -95,12 +94,13 @@ tts_choices = ClassChoices(
         fastspeech=FastSpeech,
         fastspeech2=FastSpeech2,
         fastspeech_gw=FastSpeechGW,
-        fastspeech_gw_variational=FastSpeechGWV,
+        variational_fastspeech_gw=VariationalFastSpeechGW,
         prodiff=ProDiff,
         # NOTE(kan-bayashi): available only for inference
         vits=VITS,
         joint_text2wav=JointText2Wav,
         jets=JETS,
+        vnart=VNART
     ),
     type_check=AbsTTS,
     default="tacotron2",

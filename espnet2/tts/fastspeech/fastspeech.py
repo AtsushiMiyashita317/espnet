@@ -29,6 +29,9 @@ from espnet.nets.pytorch_backend.transformer.embedding import (
 from espnet.nets.pytorch_backend.transformer.encoder import (
     Encoder as TransformerEncoder,
 )
+from espnet.nets.pytorch_backend.transformer.mixer import Mixer
+from espnet.nets.pytorch_backend.transformer.tracer import Tracer
+from espnet2.tts.fastspeech.loss import VAELoss
 
 
 class FastSpeech(AbsTTS):
@@ -700,3 +703,609 @@ class FastSpeech(AbsTTS):
             self.encoder.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
             self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+
+
+class VNART(AbsTTS):
+    def __init__(
+        self,
+        # network structure related
+        idim: int,
+        odim: int,
+        adim: int = 384,
+        aheads: int = 4,
+        layers: int = 6,
+        units: int = 1536,
+        postnet_layers: int = 5,
+        postnet_chans: int = 512,
+        postnet_filts: int = 5,
+        postnet_dropout_rate: float = 0.5,
+        positionwise_layer_type: str = "conv1d",
+        positionwise_conv_kernel_size: int = 1,
+        use_scaled_pos_enc: bool = True,
+        use_batch_norm: bool = True,
+        normalize_before: bool = True,
+        concat_after: bool = False,
+        reduction_factor: int = 1,
+        transformer_dropout_rate: float = 0.1,
+        transformer_positional_dropout_rate: float = 0.1,
+        transformer_attn_dropout_rate: float = 0.1,
+        # duration predictor
+        duration_predictor_layers: int = 2,
+        duration_predictor_chans: int = 384,
+        duration_predictor_kernel_size: int = 3,
+        duration_predictor_dropout_rate: float = 0.1,
+        # extra embedding related
+        spks: Optional[int] = None,
+        langs: Optional[int] = None,
+        spk_embed_dim: Optional[int] = None,
+        spk_embed_integration_type: str = "add",
+        use_gst: bool = False,
+        gst_tokens: int = 10,
+        gst_heads: int = 4,
+        gst_conv_layers: int = 6,
+        gst_conv_chans_list: Sequence[int] = (32, 32, 64, 64, 128, 128),
+        gst_conv_kernel_size: int = 3,
+        gst_conv_stride: int = 2,
+        gst_gru_layers: int = 1,
+        gst_gru_units: int = 128,
+        # training related
+        init_type: str = "xavier_uniform",
+        init_enc_alpha: float = 1.0,
+        init_dec_alpha: float = 1.0,
+        use_masking: bool = False,
+        use_weighted_masking: bool = False,
+    ):
+        assert check_argument_types()
+        super().__init__()
+
+        # store hyperparameters
+        self.idim = idim
+        self.odim = odim
+        self.eos = idim - 1
+        self.reduction_factor = reduction_factor
+        self.use_scaled_pos_enc = use_scaled_pos_enc
+        self.use_gst = use_gst
+
+        # use idx 0 as padding idx
+        self.padding_idx = 0
+
+        # get positional encoding class
+        pos_enc_class = (
+            ScaledPositionalEncoding if self.use_scaled_pos_enc else PositionalEncoding
+        )
+
+        # define encoder
+        self.encoder1 = TransformerEncoder(
+            idim=odim,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer='linear',
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+        
+        self.encoder2 = TransformerEncoder(
+            idim=0,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer=None,
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+        
+        # define decoder
+        decoder_input_layer = torch.nn.Embedding(
+            num_embeddings=idim, embedding_dim=adim, padding_idx=self.padding_idx
+        )
+        
+        self.decoder1 = Mixer(
+            idim=idim,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer=decoder_input_layer,
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+        
+        self.decoder2 = Mixer(
+            idim=0,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer=None,
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+        
+        # define tracer
+        tracer_input_layer = torch.nn.Embedding(
+            num_embeddings=idim, embedding_dim=adim, padding_idx=self.padding_idx
+        )
+        
+        self.tracer1 = Tracer(
+            idim=idim,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer=tracer_input_layer,
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+        
+        self.tracer2 = Tracer(
+            idim=0,
+            attention_dim=adim,
+            attention_heads=aheads,
+            linear_units=units,
+            num_blocks=layers,
+            input_layer=None,
+            dropout_rate=transformer_dropout_rate,
+            positional_dropout_rate=transformer_positional_dropout_rate,
+            attention_dropout_rate=transformer_attn_dropout_rate,
+            pos_enc_class=pos_enc_class,
+            normalize_before=normalize_before,
+            concat_after=concat_after,
+            positionwise_layer_type=positionwise_layer_type,
+            positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+        )
+
+        # define GST
+        if self.use_gst:
+            self.gst = StyleEncoder(
+                idim=odim,  # the input is mel-spectrogram
+                gst_tokens=gst_tokens,
+                gst_token_dim=adim,
+                gst_heads=gst_heads,
+                conv_layers=gst_conv_layers,
+                conv_chans_list=gst_conv_chans_list,
+                conv_kernel_size=gst_conv_kernel_size,
+                conv_stride=gst_conv_stride,
+                gru_layers=gst_gru_layers,
+                gru_units=gst_gru_units,
+            )
+
+        # define spk and lang embedding
+        self.spks = None
+        if spks is not None and spks > 1:
+            self.spks = spks
+            self.sid_emb = torch.nn.Embedding(spks, adim)
+        self.langs = None
+        if langs is not None and langs > 1:
+            self.langs = langs
+            self.lid_emb = torch.nn.Embedding(langs, adim)
+
+        # define additional projection for speaker embedding
+        self.spk_embed_dim = None
+        if spk_embed_dim is not None and spk_embed_dim > 0:
+            self.spk_embed_dim = spk_embed_dim
+            self.spk_embed_integration_type = spk_embed_integration_type
+        if self.spk_embed_dim is not None:
+            if self.spk_embed_integration_type == "add":
+                self.projection = torch.nn.Linear(self.spk_embed_dim, adim)
+            else:
+                self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
+
+        self.feat_out = torch.nn.Linear(adim, odim * reduction_factor)
+        
+         # define duration predictor
+        self.duration_predictor = DurationPredictor(
+            idim=adim,
+            n_layers=duration_predictor_layers,
+            n_chans=duration_predictor_chans,
+            kernel_size=duration_predictor_kernel_size,
+            dropout_rate=duration_predictor_dropout_rate,
+        )
+
+        # define length regulator
+        self.length_regulator = LengthRegulator()
+
+        # define postnet
+        self.postnet_mu = Postnet(
+            idim=idim,
+            odim=odim,
+            n_layers=postnet_layers,
+            n_chans=postnet_chans,
+            n_filts=postnet_filts,
+            use_batch_norm=use_batch_norm,
+            dropout_rate=postnet_dropout_rate,
+        )
+        
+        self.postnet_ln_var = Postnet(
+            idim=idim,
+            odim=odim,
+            n_layers=postnet_layers,
+            n_chans=postnet_chans,
+            n_filts=postnet_filts,
+            use_batch_norm=use_batch_norm,
+            dropout_rate=postnet_dropout_rate,
+        )
+
+        # initialize parameters
+        self._reset_parameters(
+            init_type=init_type,
+            init_enc_alpha=init_enc_alpha,
+            init_dec_alpha=init_dec_alpha,
+        )
+
+        # define criterions
+        self.criterion = VAELoss(
+            use_masking=use_masking, 
+            use_weighted_masking=use_weighted_masking,
+        )
+        
+    def _forward(
+        self,
+        xs: torch.Tensor,
+        ilens: torch.Tensor,
+        ys: Optional[torch.Tensor] = None,
+        olens: Optional[torch.Tensor] = None,
+        ds: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        is_inference: bool = False,
+        alpha: float = 1.0,
+    ) -> Sequence[torch.Tensor]:
+        x_masks = self._source_mask(ilens)
+        if olens is None:
+            if ds is not None:
+                olens = ds.sum(-1)
+        if olens is not None:
+            y_masks = self._source_mask(olens)
+        # forward encoder
+        if is_inference:
+            hs, _, _, trc_mu1, trc_ln_var1= self.tracer1.forward(xs, None, x_masks, is_inference=True)
+            dec_mu1, dec_ln_var1 = trc_mu1, trc_ln_var1
+        else:
+            hs, _, enc1 = self.encoder1.forward_one_step(ys, y_masks)
+            _, _, enc2 = self.encoder2.forward_one_step(hs, y_masks)
+            
+            hs, _, dec1, dec_mu1, dec_ln_var1 = self.decoder1.forward(xs, x_masks, enc2, y_masks)
+            
+            _, _, _, trc_mu1, trc_ln_var1= self.tracer1.forward(xs, dec1, x_masks)
+        
+        # integrate with GST
+        if self.use_gst:
+            style_embs = self.gst(ys)
+            hs = hs + style_embs.unsqueeze(1)
+
+        # integrate with SID and LID embeddings
+        if self.spks is not None:
+            sid_embs = self.sid_emb(sids.view(-1))
+            hs = hs + sid_embs.unsqueeze(1)
+        if self.langs is not None:
+            lid_embs = self.lid_emb(lids.view(-1))
+            hs = hs + lid_embs.unsqueeze(1)
+
+        # integrate speaker embedding
+        if self.spk_embed_dim is not None:
+            hs = self._integrate_with_spk_embed(hs, spembs)
+
+        # forward duration predictor and length regulator
+        d_masks = make_pad_mask(ilens).to(xs.device)
+        if is_inference:
+            d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
+            hs = self.length_regulator(hs, d_outs, alpha)  # (B, T_feats, adim)
+            olens = d_outs.sum(-1)
+            y_masks = self._source_mask(olens)
+        else:
+            d_outs = self.duration_predictor(hs, d_masks)  # (B, T_text)
+            hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
+            
+        # forward decoder
+        if is_inference:
+            zs, _, _, trc_mu2, trc_ln_var2= self.tracer2.forward(hs, None, y_masks, is_inference=True)
+            dec_mu2, dec_ln_var2 = trc_mu2, trc_ln_var2
+        else:
+            zs, _, dec2, dec_mu2, dec_ln_var2 = self.decoder2.forward(hs, y_masks, enc1, y_masks)
+            
+            _, _, _, trc_mu2, trc_ln_var2= self.tracer2.forward(hs, dec2, y_masks)
+
+        before_outs = self.feat_out(zs).view(
+            zs.size(0), -1, self.odim
+        )  # (B, T_feats, odim)
+
+        # postnet -> (B, T_feats//r * r, odim)
+        mu = self.postnet_mu(before_outs.transpose(1, 2)).transpose(1, 2)
+        
+        ln_var = self.postnet_ln_var(before_outs.transpose(1, 2)).transpose(1, 2)*1e-1-1
+
+        return (
+            mu, 
+            ln_var, 
+            d_outs,
+            tuple(zip(dec_mu1,dec_ln_var1,trc_mu1,trc_ln_var1)),
+            tuple(zip(dec_mu2,dec_ln_var2,trc_mu2,trc_ln_var2)),
+        )
+
+    def forward(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        durations: torch.Tensor,
+        durations_lengths: torch.Tensor,
+        spembs: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        joint_training: bool = False,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
+        """Calculate forward propagation.
+
+        Args:
+            text (LongTensor): Batch of padded character ids (B, T_text).
+            text_lengths (LongTensor): Batch of lengths of each input (B,).
+            feats (Tensor): Batch of padded target features (B, T_feats, odim).
+            feats_lengths (LongTensor): Batch of the lengths of each target (B,).
+            durations (LongTensor): Batch of padded durations (B, T_text + 1).
+            durations_lengths (LongTensor): Batch of duration lengths (B, T_text + 1).
+            spembs (Optional[Tensor]): Batch of speaker embeddings (B, spk_embed_dim).
+            sids (Optional[Tensor]): Batch of speaker IDs (B, 1).
+            lids (Optional[Tensor]): Batch of language IDs (B, 1).
+            joint_training (bool): Whether to perform joint training with vocoder.
+
+        Returns:
+            Tensor: Loss scalar value.
+            Dict: Statistics to be monitored.
+            Tensor: Weight value if not joint training else model outputs.
+
+        """
+        text = text[:, : text_lengths.max()]  # for data-parallel
+        feats = feats[:, : feats_lengths.max()]  # for data-parallel
+        durations = durations[:, : durations_lengths.max()]  # for data-parallel
+
+        batch_size = text.size(0)
+
+        # Add eos at the last of sequence
+        xs = F.pad(text, [0, 1], "constant", self.padding_idx)
+        for i, l in enumerate(text_lengths):
+            xs[i, l] = self.eos
+        ilens = text_lengths + 1
+
+        ys, ds = feats, durations
+        olens = feats_lengths
+
+        # forward propagation
+        mu, ln_var, d_outs, stats1, stats2 = self._forward(
+            xs,
+            ilens,
+            ys,
+            olens,
+            ds,
+            spembs=spembs,
+            sids=sids,
+            lids=lids,
+            is_inference=False,
+        )
+
+        # modifiy mod part of groundtruth
+        if self.reduction_factor > 1:
+            olens = olens.new([olen - olen % self.reduction_factor for olen in olens])
+            max_olen = max(olens)
+            ys = ys[:, :max_olen]
+
+        # calculate loss
+        l1_loss, duration_loss, kl_losses = self.criterion(
+            mu, 
+            ln_var, 
+            d_outs, 
+            ys, 
+            ds, 
+            ilens, 
+            olens,
+            stats1, 
+            stats2, 
+        )
+        loss = l1_loss + duration_loss
+        for kl_loss in kl_losses:
+            loss = loss + kl_loss
+
+        stats = dict(
+            l1_loss=l1_loss.item(),
+            duration_loss=duration_loss.item(),
+            **{f'kl_loss_{i}':kl_loss.item() for i,kl_loss in enumerate(kl_losses)}
+        )
+        
+        feats = torch.stack([feats, mu, ln_var], dim=1)
+
+        # report extra information
+        stats.update(variance=ln_var.mean().exp().item())
+        stats.update(grad_rate1=self.decoder1.grad_rate())
+        stats.update(grad_rate2=self.decoder2.grad_rate())
+        
+        if not joint_training:
+            stats.update(loss=loss.item())
+            loss, stats, weight = force_gatherable(
+                (loss, stats, batch_size), loss.device
+            )
+            return dict(
+                loss=loss,
+                stats=stats,
+                outs=weight,
+                feats=feats
+            )
+        else:
+            return dict(
+                loss=loss,
+                stats=stats,
+                outs=mu,
+                feats=feats
+            )
+
+    def inference(
+        self,
+        text: torch.Tensor,
+        feats: Optional[torch.Tensor] = None,
+        durations: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        alpha: float = 1.0,
+        use_teacher_forcing: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        """Generate the sequence of features given the sequences of characters.
+
+        Args:
+            text (LongTensor): Input sequence of characters (T_text,).
+            feats (Optional[Tensor]): Feature sequence to extract style (N, idim).
+            durations (Optional[LongTensor]): Groundtruth of duration (T_text + 1,).
+            spembs (Optional[Tensor]): Speaker embedding (spk_embed_dim,).
+            sids (Optional[Tensor]): Speaker ID (1,).
+            lids (Optional[Tensor]): Language ID (1,).
+            alpha (float): Alpha to control the speed.
+            use_teacher_forcing (bool): Whether to use teacher forcing.
+                If true, groundtruth of duration, pitch and energy will be used.
+
+        Returns:
+            Dict[str, Tensor]: Output dict including the following items:
+                * feat_gen (Tensor): Output sequence of features (T_feats, odim).
+                * duration (Tensor): Duration sequence (T_text + 1,).
+
+        """
+        x, y = text, feats
+        spemb, d = spembs, durations
+
+        # add eos at the last of sequence
+        x = F.pad(x, [0, 1], "constant", self.eos)
+
+        # setup batch axis
+        ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
+        xs, ys = x.unsqueeze(0), None
+        if y is not None:
+            ys = y.unsqueeze(0)
+        if spemb is not None:
+            spembs = spemb.unsqueeze(0)
+
+        if use_teacher_forcing:
+            # use groundtruth of duration
+            ds = d.unsqueeze(0)
+            outs, log_var, d_outs, _, _ = self._forward(
+                xs,
+                ilens,
+                ys,
+                ds=ds,
+                spembs=spembs,
+                sids=sids,
+                lids=lids,
+            )  # (1, T_feats, odim)
+        else:
+            # inference
+            outs, log_var, d_outs, _, _ = self._forward(
+                xs,
+                ilens,
+                ys,
+                spembs=spembs,
+                sids=sids,
+                lids=lids,
+                is_inference=True,
+                alpha=alpha,
+            )  # (1, T_feats, odim)
+            
+        feats = torch.cat([outs,log_var] if feats is None else [ys,outs,log_var],dim=0)
+
+        return dict(feat_gen=outs[0], duration=d_outs[0], feats=feats)
+
+    def _integrate_with_spk_embed(
+        self, hs: torch.Tensor, spembs: torch.Tensor
+    ) -> torch.Tensor:
+        """Integrate speaker embedding with hidden states.
+
+        Args:
+            hs (Tensor): Batch of hidden state sequences (B, T_text, adim).
+            spembs (Tensor): Batch of speaker embeddings (B, spk_embed_dim).
+
+        Returns:
+            Tensor: Batch of integrated hidden state sequences (B, T_text, adim).
+
+        """
+        if self.spk_embed_integration_type == "add":
+            # apply projection and then add to hidden states
+            spembs = self.projection(F.normalize(spembs))
+            hs = hs + spembs.unsqueeze(1)
+        elif self.spk_embed_integration_type == "concat":
+            # concat hidden states with spk embeds and then apply projection
+            spembs = F.normalize(spembs).unsqueeze(1).expand(-1, hs.size(1), -1)
+            hs = self.projection(torch.cat([hs, spembs], dim=-1))
+        else:
+            raise NotImplementedError("support only add or concat.")
+
+        return hs
+
+    def _source_mask(self, ilens: torch.Tensor) -> torch.Tensor:
+        """Make masks for self-attention.
+
+        Args:
+            ilens (LongTensor): Batch of lengths (B,).
+
+        Returns:
+            Tensor: Mask tensor for self-attention.
+                dtype=torch.uint8 in PyTorch 1.2-
+                dtype=torch.bool in PyTorch 1.2+ (including 1.2)
+
+        Examples:
+            >>> ilens = [5, 3]
+            >>> self._source_mask(ilens)
+            tensor([[[1, 1, 1, 1, 1],
+                     [1, 1, 1, 0, 0]]], dtype=torch.uint8)
+
+        """
+        x_masks = make_non_pad_mask(ilens).to(next(self.parameters()).device)
+        return x_masks.unsqueeze(-2)
+
+    def _reset_parameters(
+        self, init_type: str, init_enc_alpha: float, init_dec_alpha: float
+    ):
+        # initialize parameters
+        if init_type != "pytorch":
+            initialize(self, init_type)
+
+        # initialize alpha in scaled positional encoding
+        if self.use_scaled_pos_enc:
+            self.encoder1.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
+            self.encoder2.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
+            self.decoder1.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            self.decoder2.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            self.tracer1.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            self.tracer2.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            
+        self.decoder1.n_iter.data = torch.tensor(0.0)
+        self.decoder2.n_iter.data = torch.tensor(0.0)

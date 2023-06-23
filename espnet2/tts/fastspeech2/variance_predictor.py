@@ -25,6 +25,7 @@ class VariancePredictor(torch.nn.Module):
     def __init__(
         self,
         idim: int,
+        odim: int = 1,
         n_layers: int = 2,
         n_chans: int = 384,
         kernel_size: int = 3,
@@ -61,7 +62,7 @@ class VariancePredictor(torch.nn.Module):
                     torch.nn.Dropout(dropout_rate),
                 )
             ]
-        self.linear = torch.nn.Linear(n_chans, 1)
+        self.linear = torch.nn.Linear(n_chans, odim)
 
     def forward(self, xs: torch.Tensor, x_masks: torch.Tensor = None) -> torch.Tensor:
         """Calculate forward propagation.
@@ -78,7 +79,7 @@ class VariancePredictor(torch.nn.Module):
         for f in self.conv:
             xs = f(xs)  # (B, C, Tmax)
 
-        xs = self.linear(xs.transpose(1, 2))  # (B, Tmax, 1)
+        xs = self.linear(xs.transpose(1, 2))  # (B, Tmax, odim)
 
         if x_masks is not None:
             xs = xs.masked_fill(x_masks, 0.0)

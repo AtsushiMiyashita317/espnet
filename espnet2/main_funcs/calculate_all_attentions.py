@@ -6,6 +6,7 @@ import torch
 
 from espnet2.gan_tts.jets.alignments import AlignmentModule
 from espnet2.train.abs_espnet_model import AbsESPnetModel
+from espnet2.tts.abs_tts import AbsTTS
 from espnet.nets.pytorch_backend.rnn.attentions import (
     AttAdd,
     AttCov,
@@ -23,7 +24,7 @@ from espnet.nets.pytorch_backend.rnn.attentions import (
     NoAtt,
 )
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
-from espnet.nets.pytorch_backend.fastspeech_gw.length_regulator import LengthRegulator
+from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
 
 
 @torch.no_grad()
@@ -49,7 +50,6 @@ def calculate_all_attentions(
     outputs = {}
     handles = {}
     for name, modu in model.named_modules():
-
         def hook(module, input, output, name=name):
             if isinstance(module, MultiHeadedAttention):
                 # NOTE(kamo): MultiHeadedAttention doesn't return attention weight
@@ -106,19 +106,9 @@ def calculate_all_attentions(
                 att_w = torch.exp(w).detach().cpu()
                 outputs.setdefault(name, []).append(att_w)
             elif isinstance(module, LengthRegulator):
-                xs, ds = input
-                outputs[name] = module._forward(
-                    torch.eye(
-                        ds.size(1),
-                        device=ds.device
-                    ).unsqueeze(0).expand(
-                        ds.size(0),
-                        ds.size(1),
-                        ds.size(1)
-                    ),
-                    ds
-                ).detach().cpu()
-                
+                _, ds = output
+                outputs[name] = ds.detach().cpu()
+                    
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
 
@@ -181,3 +171,78 @@ def calculate_all_attentions(
         handle.remove()
 
     return dict(return_dict)
+
+
+@torch.no_grad()
+def calculate_feats(
+    model: AbsESPnetModel, batch: Dict[str, torch.Tensor]
+) -> Dict[str, List[torch.Tensor]]:
+    """Derive the outputs from the all attention layers
+
+    Args:
+        model:
+        batch: same as forward
+    Returns:
+        return_dict: A dict of a list of tensor.
+        key_names x batch x (D1, D2, ...)
+
+    """
+    bs = len(next(iter(batch.values())))
+    assert all(len(v) == bs for v in batch.values()), {
+        k: v.shape for k, v in batch.items()
+    }
+
+    outputs = {}
+    handles = {}
+    for name, modu in model.named_modules():
+
+        def hook(module, input, output, name=name):
+            if isinstance(module, AbsTTS):
+                if type(output) is dict:
+                    if 'feats' in output:
+                        outputs[name] = output['feats']
+                
+        handle = modu.register_forward_hook(hook)
+        handles[name] = handle
+
+    
+    # 2. Just forward one by one sample.
+    # Batch-mode can't be used to keep requirements small for each models.
+    keys = []
+    for k in batch:
+        if not (k.endswith("_lengths") or k in ["utt_id"]):
+            keys.append(k)
+
+    return_list = []
+    for ibatch in range(bs):
+        # *: (B, L, ...) -> (1, L2, ...)
+        _sample = {
+            k: batch[k][ibatch, None, : batch[k + "_lengths"][ibatch]]
+            if k + "_lengths" in batch
+            else batch[k][ibatch, None]
+            for k in keys
+        }
+
+        # *_lengths: (B,) -> (1,)
+        _sample.update(
+            {
+                k + "_lengths": batch[k + "_lengths"][ibatch, None]
+                for k in keys
+                if k + "_lengths" in batch
+            }
+        )
+
+        if "utt_id" in batch:
+            _sample["utt_id"] = batch["utt_id"]
+            
+        model(**_sample)
+
+        for name, output in outputs.items():
+            return_list.append(output.squeeze(0))
+        outputs.clear()
+        
+    # 3. Remove all hooks
+    for _, handle in handles.items():
+        handle.remove()
+
+    return return_list

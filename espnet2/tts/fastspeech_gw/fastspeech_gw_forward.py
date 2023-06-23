@@ -14,12 +14,12 @@ import gw
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.torch_utils.initialize import initialize
 from espnet2.tts.abs_tts import AbsTTS
-from espnet2.tts.fastspeech_gw_variational.loss import FastSpeechGWLoss
-from espnet2.tts.fastspeech_gw_variational.variance_predictor import VariancePredictor, VariationalVariancePredictor
+from espnet2.tts.fastspeech_gw.loss import FastSpeechGWLoss
+from espnet2.tts.fastspeech2.variance_predictor import VariancePredictor
 from espnet2.tts.gst.style_encoder import StyleEncoder
 from espnet.nets.pytorch_backend.conformer.encoder import Encoder as ConformerEncoder
+from espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor import DurationPredictor
 from espnet.nets.pytorch_backend.fastspeech_gw.length_regulator import LengthRegulator
-from espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor import GWsignalPredictor, DurationPredictor
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask, make_pad_mask
 from espnet.nets.pytorch_backend.tacotron2.decoder import Postnet
 from espnet.nets.pytorch_backend.transformer.embedding import (
@@ -89,29 +89,28 @@ class FastSpeechGW(AbsTTS):
         conformer_enc_kernel_size: int = 7,
         conformer_dec_kernel_size: int = 31,
         # duration predictor
-        duration_predictor_variational: bool = True,
+        duration_predictor_type: str = 'variance_predictor',
         duration_predictor_layers: int = 2,
         duration_predictor_chans: int = 384,
-        duration_predictor_latent: int = 192,
         duration_predictor_kernel_size: int = 3,
         duration_predictor_dropout_rate: float = 0.1,
-        duration_predictor_heads: int = 4,
-        duration_predictor_feats: int = 384,
+        duration_predictor_use_lpf: bool = False,
+        duration_predictor_lpf_window_size: int = 64,
+        duration_predictor_scale: float = 1e-1,
+        duration_predictor_prior: str = 'linear',
+        duration_predictor_lam: float = 1e-6,
+        duration_predictor_cumsum: bool = False,
         # energy predictor
-        energy_predictor_variational: bool = False,
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
-        energy_predictor_latent: int = 192,
         energy_predictor_kernel_size: int = 3,
         energy_predictor_dropout: float = 0.5,
         energy_embed_kernel_size: int = 9,
         energy_embed_dropout: float = 0.5,
         stop_gradient_from_energy_predictor: bool = False,
         # pitch predictor
-        pitch_predictor_variational: bool = False,
         pitch_predictor_layers: int = 2,
         pitch_predictor_chans: int = 384,
-        pitch_predictor_latent: int = 192,
         pitch_predictor_kernel_size: int = 3,
         pitch_predictor_dropout: float = 0.5,
         pitch_embed_kernel_size: int = 9,
@@ -138,9 +137,10 @@ class FastSpeechGW(AbsTTS):
         use_masking: bool = False,
         use_weighted_masking: bool = False,
         # length regulator
-        lr_sr: int = 1,
-        lr_mode: str = 'after',
-        l1_lambda: float = 1.0,
+        lr_window_size: int = 16,
+        lr_n_iter: int = 256,
+        lr_sr: int = 4,
+        lr_mode: str = 'after'
     ):
         """Initialize FastSpeech2 module.
 
@@ -371,38 +371,40 @@ class FastSpeechGW(AbsTTS):
                 self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
         # define duration predictor
-        duration_predictor_class = VariationalVariancePredictor if duration_predictor_variational else VariancePredictor
-        self.duration_predictor = duration_predictor_class(
+        self.duration_predictor = DurationPredictor(
             idim=adim,
-            tdim=idim,
-            odim=duration_predictor_odim,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            n_latent=duration_predictor_latent,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=duration_predictor_dropout_rate
-        )
+            predictor_type=duration_predictor_type,
+            
+            vp_n_layers=duration_predictor_layers,
+            vp_n_chans=duration_predictor_chans,
+            vp_kernel_size=duration_predictor_kernel_size,
+            vp_dropout_rate=duration_predictor_dropout_rate,
+            
+            te_attention_dim=adim,
+            te_attention_heads=aheads,
+            te_linear_units=eunits,
+            te_num_blocks=duration_predictor_layers,
+            te_input_layer=None,
+            te_dropout_rate=transformer_enc_dropout_rate,
+            te_positional_dropout_rate=transformer_enc_positional_dropout_rate,
+            te_attention_dropout_rate=transformer_enc_attn_dropout_rate,
+            te_pos_enc_class=pos_enc_class,
+            te_normalize_before=encoder_normalize_before,
+            te_concat_after=encoder_concat_after,
+            te_positionwise_layer_type=positionwise_layer_type,
+            te_positionwise_conv_kernel_size=positionwise_conv_kernel_size,
         
-        self.alignment_module = GWsignalPredictor(
-            tdim=idim,
-            fdim=odim,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            n_head=duration_predictor_heads,
-            n_feat=duration_predictor_feats,
-            dropout_rate=duration_predictor_dropout_rate   
+            use_lpf=duration_predictor_use_lpf,
+            lpf_window_size=duration_predictor_lpf_window_size,
+            scale=duration_predictor_scale,
+            cumsum=duration_predictor_cumsum
         )
 
         # define pitch predictor
-        pitch_predictor_class = VariationalVariancePredictor if pitch_predictor_variational else VariancePredictor
-        self.pitch_predictor = pitch_predictor_class(
+        self.pitch_predictor = VariancePredictor(
             idim=adim,
-            tdim=idim,
-            odim=1,
             n_layers=pitch_predictor_layers,
             n_chans=pitch_predictor_chans,
-            n_latent=pitch_predictor_latent,
             kernel_size=pitch_predictor_kernel_size,
             dropout_rate=pitch_predictor_dropout,
         )
@@ -418,14 +420,10 @@ class FastSpeechGW(AbsTTS):
         )
 
         # define energy predictor
-        energy_predictor_class = VariationalVariancePredictor if energy_predictor_variational else VariancePredictor
-        self.energy_predictor = energy_predictor_class(
+        self.energy_predictor = VariancePredictor(
             idim=adim,
-            tdim=idim,
-            odim=1,
             n_layers=energy_predictor_layers,
             n_chans=energy_predictor_chans,
-            n_latent=energy_predictor_latent,
             kernel_size=energy_predictor_kernel_size,
             dropout_rate=energy_predictor_dropout,
         )
@@ -442,6 +440,8 @@ class FastSpeechGW(AbsTTS):
 
         # define length regulator
         self.length_regulator = LengthRegulator(
+            window_size=lr_window_size,
+            n_iter=lr_n_iter,
             sr=lr_sr
         )
         self.lr_mode = lr_mode
@@ -518,11 +518,11 @@ class FastSpeechGW(AbsTTS):
 
         # define criterions
         self.criterion = FastSpeechGWLoss(
+            use_masking=use_masking, 
+            use_weighted_masking=use_weighted_masking,
             lr_mode=lr_mode,
-            duration_predictor_variational=duration_predictor_variational,
-            pitch_predictor_variational=pitch_predictor_variational,
-            energy_predictor_variational=energy_predictor_variational,
-            l1_lambda=l1_lambda
+            duration_predictor_prior=duration_predictor_prior,
+            duration_predictor_lam=duration_predictor_lam
         )
 
     def forward(
@@ -584,11 +584,12 @@ class FastSpeechGW(AbsTTS):
         olens = feats_lengths
 
         # forward propagation
-        outs = self._forward(
+        before_outs, after_outs, d_outs, p_outs, e_outs = self._forward(
             xs,
             ilens,
             ys,
             olens,
+            ds,
             ps,
             es,
             spembs=spembs,
@@ -596,8 +597,7 @@ class FastSpeechGW(AbsTTS):
             lids=lids,
             is_inference=False,
         )
-        before_outs, after_outs = outs['before_outs'], outs['after_outs']
-        
+
         # modify mod part of groundtruth
         if self.reduction_factor > 1:
             olens = olens.new([olen - olen % self.reduction_factor for olen in olens])
@@ -609,19 +609,27 @@ class FastSpeechGW(AbsTTS):
             after_outs = None
 
         # calculate loss
-        stats = self.criterion(
-            xs=xs,
+        l1_loss, duration_loss, pitch_loss, energy_loss = self.criterion(
+            after_outs=after_outs,
+            before_outs=before_outs,
+            d_outs=d_outs,
+            p_outs=p_outs,
+            e_outs=e_outs,
             ys=ys,
+            ds=ds,
             ps=ps,
             es=es,
             ilens=ilens,
             olens=olens,
-            **outs
         )
-        
-        loss = 0        
-        for l in stats.values():
-            loss = loss + l
+        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+
+        stats = dict(
+            l1_loss=l1_loss.item(),
+            duration_loss=duration_loss.item(),
+            pitch_loss=pitch_loss.item(),
+            energy_loss=energy_loss.item(),
+        )
 
         # report extra information
         if self.encoder_type == "transformer" and self.use_scaled_pos_enc:
@@ -648,6 +656,7 @@ class FastSpeechGW(AbsTTS):
         ilens: torch.Tensor,
         ys: Optional[torch.Tensor] = None,
         olens: Optional[torch.Tensor] = None,
+        ds: Optional[torch.Tensor] = None,
         ps: Optional[torch.Tensor] = None,
         es: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
@@ -656,7 +665,6 @@ class FastSpeechGW(AbsTTS):
         is_inference: bool = False,
         alpha: float = 1.0,
     ) -> Sequence[torch.Tensor]:
-        outs = dict()
         # forward encoder
         x_masks = self._source_mask(ilens)
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
@@ -681,40 +689,26 @@ class FastSpeechGW(AbsTTS):
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
         
-        # length
         if self.lr_mode == 'before':
-            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text, 1)
-            outs.update(d_outs=d_outs)
-            d_outs = d_outs['output']
-            d_outs = self.duration_predictor_scale*d_outs.squeeze(-1)  # (B, T_text)
+            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text)
             hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
         
         hs = gw.utils.interpolate(hs, ilens, olens)
         d_masks = make_pad_mask(olens).to(xs.device)      
         
         if self.lr_mode == 'after':
-            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text, 1)
-            outs.update(d_outs=d_outs)
-            d_outs = d_outs['output']
-            d_outs = self.duration_predictor_scale*d_outs.squeeze(-1)  # (B, T_text)
+            d_outs = self.duration_predictor(hs, d_masks.unsqueeze(-1))  # (B, T_text)
             hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
-        
-        # pitch    
+                    
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             p_outs = self.pitch_predictor(hs, d_masks.unsqueeze(-1))
-        outs.update(p_outs=p_outs)
-        p_outs = p_outs['output']
-        
-        # energy
         if self.stop_gradient_from_energy_predictor:
             e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
-        outs.update(e_outs=e_outs)
-        e_outs = e_outs['output']
-        
+
         if is_inference:
             # use prediction in inference
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
@@ -741,10 +735,8 @@ class FastSpeechGW(AbsTTS):
                 before_outs.transpose(1, 2)
             ).transpose(1, 2)
 
-        outs.update(before_outs=before_outs, after_outs=after_outs)
+        return before_outs, after_outs, d_outs, p_outs, e_outs
 
-        return outs
-    
     def inference(
         self,
         text: torch.Tensor,
@@ -796,27 +788,38 @@ class FastSpeechGW(AbsTTS):
         if spemb is not None:
             spembs = spemb.unsqueeze(0)
 
-        outs = self._forward(
-            xs,
-            ilens,
-            ys,
-            olens,
-            spembs=spembs,
-            sids=sids,
-            lids=lids,
-            is_inference=True,
-            alpha=alpha,
-        )
-
-        after_outs = outs['after_outs']
-        d_outs = outs['d_out']['output']
-        p_outs = outs['p_out']['output']
-        e_outs = outs['e_out']['output']
+        if use_teacher_forcing and False:
+            # use groundtruth of duration, pitch, and energy
+            ds, ps, es = None, p.unsqueeze(0), e.unsqueeze(0)
+            _, outs, d_outs, p_outs, e_outs = self._forward(
+                xs,
+                ilens,
+                ys,
+                olens,
+                ds=ds,
+                ps=ps,
+                es=es,
+                spembs=spembs,
+                sids=sids,
+                lids=lids,
+            )  # (1, T_feats, odim)
+        else:
+            _, outs, d_outs, p_outs, e_outs = self._forward(
+                xs,
+                ilens,
+                ys,
+                olens,
+                spembs=spembs,
+                sids=sids,
+                lids=lids,
+                is_inference=True,
+                alpha=alpha,
+            )  # (1, T_feats, odim)
 
         att_w = self.length_regulator(torch.eye(d_outs.size(-1), device=d_outs.device).unsqueeze(0), d_outs)
 
         return dict(
-            feat_gen=after_outs[0],
+            feat_gen=outs[0],
             duration=d_outs[0],
             pitch=p_outs[0],
             energy=e_outs[0],

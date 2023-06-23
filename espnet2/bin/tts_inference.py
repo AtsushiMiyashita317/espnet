@@ -406,6 +406,7 @@ def inference(
     (output_dir / "speech_shape").mkdir(parents=True, exist_ok=True)
     (output_dir / "wav").mkdir(parents=True, exist_ok=True)
     (output_dir / "att_ws").mkdir(parents=True, exist_ok=True)
+    (output_dir / "feats").mkdir(parents=True, exist_ok=True)
     (output_dir / "probs").mkdir(parents=True, exist_ok=True)
     (output_dir / "durations").mkdir(parents=True, exist_ok=True)
     (output_dir / "focus_rates").mkdir(parents=True, exist_ok=True)
@@ -516,6 +517,37 @@ def inference(
                 fig.set_tight_layout({"rect": [0, 0.03, 1, 0.95]})
                 fig.savefig(output_dir / f"att_ws/{key}.png")
                 fig.clf()
+                
+            if output_dict.get("feats") is not None:
+                # Plot attention weight
+                feats = output_dict["feats"].cpu().numpy()
+
+                if feats.ndim == 2:
+                    feats = feats[None]
+                elif feats.ndim != 3:
+                    raise RuntimeError(f"Must be 2 or 3 dimension: {feats.ndim}")
+
+                w, h = plt.figaspect(feats.shape[0]*feats.shape[2]/feats.shape[1])
+                fig = plt.Figure(
+                    figsize=(
+                        w,
+                        2*h,
+                    )
+                )
+                fig.suptitle(f"{key}")
+                axes = fig.subplots(feats.shape[0], 1)
+                if len(feats) == 1:
+                    axes = [axes]
+                for ax, feat in zip(axes, feats):
+                    ax.imshow(feat.T.astype(np.float32), aspect="auto", origin='lower')
+                    ax.set_xlabel("Time")
+                    ax.set_ylabel("Frequency")
+                    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+                    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+                fig.set_tight_layout({"rect": [0, 0.03, 1, 0.95]})
+                fig.savefig(output_dir / f"feats/{key}.png")
+                fig.clf()
 
             if output_dict.get("prob") is not None:
                 # Plot stop token prediction
@@ -550,6 +582,8 @@ def inference(
         shutil.rmtree(output_dir / "denorm")
     if output_dict.get("att_w") is None:
         shutil.rmtree(output_dir / "att_ws")
+    if output_dict.get("feats") is None:
+        shutil.rmtree(output_dir / "feats")
     if output_dict.get("duration") is None:
         shutil.rmtree(output_dir / "durations")
     if output_dict.get("focus_rate") is None:

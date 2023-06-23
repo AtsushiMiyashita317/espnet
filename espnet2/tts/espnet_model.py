@@ -15,7 +15,8 @@ from espnet2.layers.inversible_interface import InversibleInterface
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
-from espnet2.tts.fastspeech_gw.fastspeech_gw import FastSpeechGW
+from espnet2.tts.fastspeech_gw import FastSpeechGW, VariationalFastSpeechGW
+from espnet2.tts.fastspeech2 import FastSpeech2
 
 if V(torch.__version__) >= V("1.6.0"):
     from torch.cuda.amp import autocast
@@ -149,7 +150,11 @@ class ESPnetTTSModel(AbsESPnetModel):
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
 
-        return self.tts(**batch)
+        outs = self.tts(**batch)
+        if type(outs) is tuple:
+            return outs
+        return outs['loss'], outs['stats'], outs['outs']
+        
 
     def collect_feats(
         self,
@@ -250,7 +255,7 @@ class ESPnetTTSModel(AbsESPnetModel):
 
         """
         input_dict = dict(text=text)
-        if decode_config["use_teacher_forcing"] or getattr(self.tts, "use_gst", False) or isinstance(self.tts, FastSpeechGW):
+        if decode_config["use_teacher_forcing"] or getattr(self.tts, "use_gst", False) or isinstance(self.tts, (FastSpeechGW, VariationalFastSpeechGW, FastSpeech2)):
             if speech is None:
                 raise RuntimeError("missing required argument: 'speech'")
             if self.feats_extract is not None:
@@ -264,7 +269,7 @@ class ESPnetTTSModel(AbsESPnetModel):
             if self.tts.require_raw_speech:
                 input_dict.update(speech=speech)
 
-        if decode_config["use_teacher_forcing"] and not isinstance(self.tts, FastSpeechGW):
+        if decode_config["use_teacher_forcing"] and not isinstance(self.tts, (FastSpeechGW, VariationalFastSpeechGW, FastSpeech2)):
             if durations is not None:
                 input_dict.update(durations=durations)
 
