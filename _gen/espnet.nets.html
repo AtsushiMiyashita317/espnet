@@ -217,6 +217,7 @@
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-plot-1">espnet.nets.pytorch_backend.transformer.plot</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-mask-1">espnet.nets.pytorch_backend.transformer.mask</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-init-1">espnet.nets.pytorch_backend.transformer.__init__</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-mixer-1">espnet.nets.pytorch_backend.transformer.mixer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-encoder-layer-1">espnet.nets.pytorch_backend.transformer.encoder_layer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-label-smoothing-loss-1">espnet.nets.pytorch_backend.transformer.label_smoothing_loss</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-argument-1">espnet.nets.pytorch_backend.transformer.argument</a></li>
@@ -228,8 +229,10 @@
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-add-sos-eos-1">espnet.nets.pytorch_backend.transformer.add_sos_eos</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-optimizer-1">espnet.nets.pytorch_backend.transformer.optimizer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-attention-1">espnet.nets.pytorch_backend.transformer.attention</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-tracer-1">espnet.nets.pytorch_backend.transformer.tracer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-positionwise-feed-forward-1">espnet.nets.pytorch_backend.transformer.positionwise_feed_forward</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-layer-norm-1">espnet.nets.pytorch_backend.transformer.layer_norm</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-reparametrize-1">espnet.nets.pytorch_backend.transformer.reparametrize</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-subsampling-without-posenc-1">espnet.nets.pytorch_backend.transformer.subsampling_without_posenc</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-initializer-1">espnet.nets.pytorch_backend.transformer.initializer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-decoder-1">espnet.nets.pytorch_backend.transformer.decoder</a></li>
@@ -240,6 +243,7 @@
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-repeat-1">espnet.nets.pytorch_backend.transformer.repeat</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-lightconv2d-1">espnet.nets.pytorch_backend.transformer.lightconv2d</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-dynamic-conv-1">espnet.nets.pytorch_backend.transformer.dynamic_conv</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-mixer-layer-1">espnet.nets.pytorch_backend.transformer.mixer_layer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-transformer-longformer-attention-1">espnet.nets.pytorch_backend.transformer.longformer_attention</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-lm-init-1">espnet.nets.pytorch_backend.lm.__init__</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#espnet-nets-pytorch-backend-lm-seq-rnn-1">espnet.nets.pytorch_backend.lm.seq_rnn</a></li>
@@ -12836,6 +12840,95 @@ values should be torch.Tensor (head, input_length, output_length)</p></li>
 <span id="espnet-nets-pytorch-backend-transformer-init"></span><h2>espnet.nets.pytorch_backend.transformer.__init__<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-init-1" title="Permalink to this headline">¶</a></h2>
 <span class="target" id="module-espnet.nets.pytorch_backend.transformer.__init__"></span><p>Initialize sub package.</p>
 </section>
+<section id="espnet-nets-pytorch-backend-transformer-mixer-1">
+<span id="espnet-nets-pytorch-backend-transformer-mixer"></span><h2>espnet.nets.pytorch_backend.transformer.mixer<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-mixer-1" title="Permalink to this headline">¶</a></h2>
+<span class="target" id="module-espnet.nets.pytorch_backend.transformer.mixer"></span><p>Encoder definition.</p>
+<dl class="class">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer.Mixer">
+<em class="property">class </em><code class="sig-prename descclassname">espnet.nets.pytorch_backend.transformer.mixer.</code><code class="sig-name descname">Mixer</code><span class="sig-paren">(</span><em class="sig-param">idim</em>, <em class="sig-param">attention_dim=256</em>, <em class="sig-param">attention_heads=4</em>, <em class="sig-param">conv_wshare=4</em>, <em class="sig-param">conv_kernel_length='11'</em>, <em class="sig-param">conv_usebias=False</em>, <em class="sig-param">linear_units=2048</em>, <em class="sig-param">num_blocks=6</em>, <em class="sig-param">dropout_rate=0.1</em>, <em class="sig-param">positional_dropout_rate=0.1</em>, <em class="sig-param">attention_dropout_rate=0.0</em>, <em class="sig-param">input_layer='conv2d'</em>, <em class="sig-param">pos_enc_class=&lt;class 'espnet.nets.pytorch_backend.transformer.embedding.PositionalEncoding'&gt;</em>, <em class="sig-param">normalize_before=True</em>, <em class="sig-param">concat_after=False</em>, <em class="sig-param">positionwise_layer_type='linear'</em>, <em class="sig-param">positionwise_conv_kernel_size=1</em>, <em class="sig-param">selfattention_layer_type='selfattn'</em>, <em class="sig-param">padding_idx=-1</em>, <em class="sig-param">stochastic_depth_rate=0.0</em>, <em class="sig-param">intermediate_layers=None</em>, <em class="sig-param">ctc_softmax=None</em>, <em class="sig-param">conditioning_layer_dim=None</em>, <em class="sig-param">grad_rate_stop=20000</em>, <em class="sig-param">grad_rate_warmup=50000</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer.html#Mixer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer.Mixer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">torch.nn.modules.module.Module</span></code></p>
+<p>Transformer encoder module.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>idim</strong> (<em>int</em>) – Input dimension.</p></li>
+<li><p><strong>attention_dim</strong> (<em>int</em>) – Dimension of attention.</p></li>
+<li><p><strong>attention_heads</strong> (<em>int</em>) – The number of heads of multi head attention.</p></li>
+<li><p><strong>conv_wshare</strong> (<em>int</em>) – The number of kernel of convolution. Only used in
+selfattention_layer_type == “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>conv_kernel_length</strong> (<em>Union</em><em>[</em><em>int</em><em>, </em><em>str</em><em>]</em>) – Kernel size str of convolution
+(e.g. 71_71_71_71_71_71). Only used in selfattention_layer_type
+== “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>conv_usebias</strong> (<em>bool</em>) – Whether to use bias in convolution. Only used in
+selfattention_layer_type == “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>linear_units</strong> (<em>int</em>) – The number of units of position-wise feed forward.</p></li>
+<li><p><strong>num_blocks</strong> (<em>int</em>) – The number of decoder blocks.</p></li>
+<li><p><strong>dropout_rate</strong> (<em>float</em>) – Dropout rate.</p></li>
+<li><p><strong>positional_dropout_rate</strong> (<em>float</em>) – Dropout rate after adding positional encoding.</p></li>
+<li><p><strong>attention_dropout_rate</strong> (<em>float</em>) – Dropout rate in attention.</p></li>
+<li><p><strong>input_layer</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>torch.nn.Module</em><em>]</em>) – Input layer type.</p></li>
+<li><p><strong>pos_enc_class</strong> (<em>torch.nn.Module</em>) – Positional encoding module class.
+<cite>PositionalEncoding `or `ScaledPositionalEncoding</cite></p></li>
+<li><p><strong>normalize_before</strong> (<em>bool</em>) – Whether to use layer_norm before the first block.</p></li>
+<li><p><strong>concat_after</strong> (<em>bool</em>) – Whether to concat attention layer’s input and output.
+if True, additional linear will be applied.
+i.e. x -&gt; x + linear(concat(x, att(x)))
+if False, no additional linear will be applied. i.e. x -&gt; x + att(x)</p></li>
+<li><p><strong>positionwise_layer_type</strong> (<em>str</em>) – “linear”, “conv1d”, or “conv1d-linear”.</p></li>
+<li><p><strong>positionwise_conv_kernel_size</strong> (<em>int</em>) – Kernel size of positionwise conv1d layer.</p></li>
+<li><p><strong>selfattention_layer_type</strong> (<em>str</em>) – Encoder attention layer type.</p></li>
+<li><p><strong>padding_idx</strong> (<em>int</em>) – Padding idx for input_layer=embed.</p></li>
+<li><p><strong>stochastic_depth_rate</strong> (<em>float</em>) – Maximum probability to skip the encoder layer.</p></li>
+<li><p><strong>intermediate_layers</strong> (<em>Union</em><em>[</em><em>List</em><em>[</em><em>int</em><em>]</em><em>, </em><em>None</em><em>]</em>) – indices of intermediate CTC layer.
+indices start from 1.
+if not None, intermediate outputs are returned (which changes return type
+signature.)</p></li>
+</ul>
+</dd>
+</dl>
+<p>Construct an Encoder object.</p>
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer.Mixer.forward">
+<code class="sig-name descname">forward</code><span class="sig-paren">(</span><em class="sig-param">xs</em>, <em class="sig-param">xs_masks</em>, <em class="sig-param">ys_cache</em>, <em class="sig-param">ys_masks</em>, <em class="sig-param">cache=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer.html#Mixer.forward"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer.Mixer.forward" title="Permalink to this definition">¶</a></dt>
+<dd><p>Encode input frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>xs</strong> (<em>torch.Tensor</em>) – Input tensor.</p></li>
+<li><p><strong>masks</strong> (<em>torch.Tensor</em>) – Mask tensor.</p></li>
+<li><p><strong>cache</strong> (<em>List</em><em>[</em><em>torch.Tensor</em><em>]</em>) – List of cache tensors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Output tensor.
+torch.Tensor: Mask tensor.
+List[torch.Tensor]: List of new cache tensors.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer.Mixer.get_positionwise_layer">
+<code class="sig-name descname">get_positionwise_layer</code><span class="sig-paren">(</span><em class="sig-param">positionwise_layer_type='linear'</em>, <em class="sig-param">attention_dim=256</em>, <em class="sig-param">linear_units=2048</em>, <em class="sig-param">dropout_rate=0.1</em>, <em class="sig-param">positionwise_conv_kernel_size=1</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer.html#Mixer.get_positionwise_layer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer.Mixer.get_positionwise_layer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Define positionwise layer.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer.Mixer.grad_rate">
+<code class="sig-name descname">grad_rate</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer.html#Mixer.grad_rate"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer.Mixer.grad_rate" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer.Mixer.step">
+<code class="sig-name descname">step</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer.html#Mixer.step"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer.Mixer.step" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
 <section id="espnet-nets-pytorch-backend-transformer-encoder-layer-1">
 <span id="espnet-nets-pytorch-backend-transformer-encoder-layer"></span><h2>espnet.nets.pytorch_backend.transformer.encoder_layer<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-encoder-layer-1" title="Permalink to this headline">¶</a></h2>
 <span class="target" id="module-espnet.nets.pytorch_backend.transformer.encoder_layer"></span><p>Encoder self-attention layer definition.</p>
@@ -13778,6 +13871,85 @@ torch.Tensor: Transformed value tensor (#batch, n_head, time2, d_k).</p>
 </dd></dl>
 
 </section>
+<section id="espnet-nets-pytorch-backend-transformer-tracer-1">
+<span id="espnet-nets-pytorch-backend-transformer-tracer"></span><h2>espnet.nets.pytorch_backend.transformer.tracer<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-tracer-1" title="Permalink to this headline">¶</a></h2>
+<span class="target" id="module-espnet.nets.pytorch_backend.transformer.tracer"></span><p>Encoder definition.</p>
+<dl class="class">
+<dt id="espnet.nets.pytorch_backend.transformer.tracer.Tracer">
+<em class="property">class </em><code class="sig-prename descclassname">espnet.nets.pytorch_backend.transformer.tracer.</code><code class="sig-name descname">Tracer</code><span class="sig-paren">(</span><em class="sig-param">idim</em>, <em class="sig-param">attention_dim=256</em>, <em class="sig-param">attention_heads=4</em>, <em class="sig-param">conv_wshare=4</em>, <em class="sig-param">conv_kernel_length='11'</em>, <em class="sig-param">conv_usebias=False</em>, <em class="sig-param">linear_units=2048</em>, <em class="sig-param">num_blocks=6</em>, <em class="sig-param">dropout_rate=0.1</em>, <em class="sig-param">positional_dropout_rate=0.1</em>, <em class="sig-param">attention_dropout_rate=0.0</em>, <em class="sig-param">input_layer='conv2d'</em>, <em class="sig-param">pos_enc_class=&lt;class 'espnet.nets.pytorch_backend.transformer.embedding.PositionalEncoding'&gt;</em>, <em class="sig-param">normalize_before=True</em>, <em class="sig-param">concat_after=False</em>, <em class="sig-param">positionwise_layer_type='linear'</em>, <em class="sig-param">positionwise_conv_kernel_size=1</em>, <em class="sig-param">selfattention_layer_type='selfattn'</em>, <em class="sig-param">padding_idx=-1</em>, <em class="sig-param">stochastic_depth_rate=0.0</em>, <em class="sig-param">intermediate_layers=None</em>, <em class="sig-param">ctc_softmax=None</em>, <em class="sig-param">conditioning_layer_dim=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/tracer.html#Tracer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.tracer.Tracer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">torch.nn.modules.module.Module</span></code></p>
+<p>Transformer encoder module.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>idim</strong> (<em>int</em>) – Input dimension.</p></li>
+<li><p><strong>attention_dim</strong> (<em>int</em>) – Dimension of attention.</p></li>
+<li><p><strong>attention_heads</strong> (<em>int</em>) – The number of heads of multi head attention.</p></li>
+<li><p><strong>conv_wshare</strong> (<em>int</em>) – The number of kernel of convolution. Only used in
+selfattention_layer_type == “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>conv_kernel_length</strong> (<em>Union</em><em>[</em><em>int</em><em>, </em><em>str</em><em>]</em>) – Kernel size str of convolution
+(e.g. 71_71_71_71_71_71). Only used in selfattention_layer_type
+== “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>conv_usebias</strong> (<em>bool</em>) – Whether to use bias in convolution. Only used in
+selfattention_layer_type == “lightconv*” or “dynamiconv*”.</p></li>
+<li><p><strong>linear_units</strong> (<em>int</em>) – The number of units of position-wise feed forward.</p></li>
+<li><p><strong>num_blocks</strong> (<em>int</em>) – The number of decoder blocks.</p></li>
+<li><p><strong>dropout_rate</strong> (<em>float</em>) – Dropout rate.</p></li>
+<li><p><strong>positional_dropout_rate</strong> (<em>float</em>) – Dropout rate after adding positional encoding.</p></li>
+<li><p><strong>attention_dropout_rate</strong> (<em>float</em>) – Dropout rate in attention.</p></li>
+<li><p><strong>input_layer</strong> (<em>Union</em><em>[</em><em>str</em><em>, </em><em>torch.nn.Module</em><em>]</em>) – Input layer type.</p></li>
+<li><p><strong>pos_enc_class</strong> (<em>torch.nn.Module</em>) – Positional encoding module class.
+<cite>PositionalEncoding `or `ScaledPositionalEncoding</cite></p></li>
+<li><p><strong>normalize_before</strong> (<em>bool</em>) – Whether to use layer_norm before the first block.</p></li>
+<li><p><strong>concat_after</strong> (<em>bool</em>) – Whether to concat attention layer’s input and output.
+if True, additional linear will be applied.
+i.e. x -&gt; x + linear(concat(x, att(x)))
+if False, no additional linear will be applied. i.e. x -&gt; x + att(x)</p></li>
+<li><p><strong>positionwise_layer_type</strong> (<em>str</em>) – “linear”, “conv1d”, or “conv1d-linear”.</p></li>
+<li><p><strong>positionwise_conv_kernel_size</strong> (<em>int</em>) – Kernel size of positionwise conv1d layer.</p></li>
+<li><p><strong>selfattention_layer_type</strong> (<em>str</em>) – Encoder attention layer type.</p></li>
+<li><p><strong>padding_idx</strong> (<em>int</em>) – Padding idx for input_layer=embed.</p></li>
+<li><p><strong>stochastic_depth_rate</strong> (<em>float</em>) – Maximum probability to skip the encoder layer.</p></li>
+<li><p><strong>intermediate_layers</strong> (<em>Union</em><em>[</em><em>List</em><em>[</em><em>int</em><em>]</em><em>, </em><em>None</em><em>]</em>) – indices of intermediate CTC layer.
+indices start from 1.
+if not None, intermediate outputs are returned (which changes return type
+signature.)</p></li>
+</ul>
+</dd>
+</dl>
+<p>Construct an Encoder object.</p>
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.tracer.Tracer.forward">
+<code class="sig-name descname">forward</code><span class="sig-paren">(</span><em class="sig-param">xs</em>, <em class="sig-param">xs_cache</em>, <em class="sig-param">xs_masks</em>, <em class="sig-param">cache=None</em>, <em class="sig-param">is_inference=False</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/tracer.html#Tracer.forward"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.tracer.Tracer.forward" title="Permalink to this definition">¶</a></dt>
+<dd><p>Encode input frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>xs</strong> (<em>torch.Tensor</em>) – Input tensor.</p></li>
+<li><p><strong>masks</strong> (<em>torch.Tensor</em>) – Mask tensor.</p></li>
+<li><p><strong>cache</strong> (<em>List</em><em>[</em><em>torch.Tensor</em><em>]</em>) – List of cache tensors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Output tensor.
+torch.Tensor: Mask tensor.
+List[torch.Tensor]: List of new cache tensors.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.tracer.Tracer.get_positionwise_layer">
+<code class="sig-name descname">get_positionwise_layer</code><span class="sig-paren">(</span><em class="sig-param">positionwise_layer_type='linear'</em>, <em class="sig-param">attention_dim=256</em>, <em class="sig-param">linear_units=2048</em>, <em class="sig-param">dropout_rate=0.1</em>, <em class="sig-param">positionwise_conv_kernel_size=1</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/tracer.html#Tracer.get_positionwise_layer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.tracer.Tracer.get_positionwise_layer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Define positionwise layer.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
 <section id="espnet-nets-pytorch-backend-transformer-positionwise-feed-forward-1">
 <span id="espnet-nets-pytorch-backend-transformer-positionwise-feed-forward"></span><h2>espnet.nets.pytorch_backend.transformer.positionwise_feed_forward<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-positionwise-feed-forward-1" title="Permalink to this headline">¶</a></h2>
 <span class="target" id="module-espnet.nets.pytorch_backend.transformer.positionwise_feed_forward"></span><p>Positionwise feed forward layer definition.</p>
@@ -13837,6 +14009,33 @@ torch.Tensor: Transformed value tensor (#batch, n_head, time2, d_k).</p>
 <dd class="field-odd"><p>torch.Tensor</p>
 </dd>
 </dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="espnet-nets-pytorch-backend-transformer-reparametrize-1">
+<span id="espnet-nets-pytorch-backend-transformer-reparametrize"></span><h2>espnet.nets.pytorch_backend.transformer.reparametrize<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-reparametrize-1" title="Permalink to this headline">¶</a></h2>
+<span class="target" id="module-espnet.nets.pytorch_backend.transformer.reparametrize"></span><p>Positionwise feed forward layer definition.</p>
+<dl class="class">
+<dt id="espnet.nets.pytorch_backend.transformer.reparametrize.Reparametrize">
+<em class="property">class </em><code class="sig-prename descclassname">espnet.nets.pytorch_backend.transformer.reparametrize.</code><code class="sig-name descname">Reparametrize</code><span class="sig-paren">(</span><em class="sig-param">idim</em>, <em class="sig-param">scale=0.1</em>, <em class="sig-param">offset=-1</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/reparametrize.html#Reparametrize"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.reparametrize.Reparametrize" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">torch.nn.modules.module.Module</span></code></p>
+<p>Positionwise feed forward layer.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>idim</strong> (<em>int</em>) – Input dimenstion.</p></li>
+<li><p><strong>hidden_units</strong> (<em>int</em>) – The number of hidden units.</p></li>
+<li><p><strong>dropout_rate</strong> (<em>float</em>) – Dropout rate.</p></li>
+</ul>
+</dd>
+</dl>
+<p>Construct an PositionwiseFeedForward object.</p>
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.reparametrize.Reparametrize.forward">
+<code class="sig-name descname">forward</code><span class="sig-paren">(</span><em class="sig-param">x</em>, <em class="sig-param">grad_rate=1.0</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/reparametrize.html#Reparametrize.forward"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.reparametrize.Reparametrize.forward" title="Permalink to this definition">¶</a></dt>
+<dd><p>Forward function.</p>
 </dd></dl>
 
 </dd></dl>
@@ -14656,6 +14855,63 @@ This is just for compatibility with self-attention layer (attention.py)</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p>x (torch.Tensor)</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="espnet-nets-pytorch-backend-transformer-mixer-layer-1">
+<span id="espnet-nets-pytorch-backend-transformer-mixer-layer"></span><h2>espnet.nets.pytorch_backend.transformer.mixer_layer<a class="headerlink" href="#espnet-nets-pytorch-backend-transformer-mixer-layer-1" title="Permalink to this headline">¶</a></h2>
+<span class="target" id="module-espnet.nets.pytorch_backend.transformer.mixer_layer"></span><p>Decoder self-attention layer definition.</p>
+<dl class="class">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer_layer.MixerLayer">
+<em class="property">class </em><code class="sig-prename descclassname">espnet.nets.pytorch_backend.transformer.mixer_layer.</code><code class="sig-name descname">MixerLayer</code><span class="sig-paren">(</span><em class="sig-param">size</em>, <em class="sig-param">src_attn</em>, <em class="sig-param">feed_forward</em>, <em class="sig-param">dropout_rate</em>, <em class="sig-param">normalize_before=True</em>, <em class="sig-param">concat_after=False</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer_layer.html#MixerLayer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer_layer.MixerLayer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">torch.nn.modules.module.Module</span></code></p>
+<p>Single decoder layer module.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>size</strong> (<em>int</em>) – Input dimension.</p></li>
+<li><p><strong>src_attn</strong> (<em>torch.nn.Module</em>) – Self-attention module instance.
+<cite>MultiHeadedAttention</cite> instance can be used as the argument.</p></li>
+<li><p><strong>feed_forward</strong> (<em>torch.nn.Module</em>) – Feed-forward module instance.
+<cite>PositionwiseFeedForward</cite>, <cite>MultiLayeredConv1d</cite>, or <cite>Conv1dLinear</cite> instance
+can be used as the argument.</p></li>
+<li><p><strong>dropout_rate</strong> (<em>float</em>) – Dropout rate.</p></li>
+<li><p><strong>normalize_before</strong> (<em>bool</em>) – Whether to use layer_norm before the first block.</p></li>
+<li><p><strong>concat_after</strong> (<em>bool</em>) – Whether to concat attention layer’s input and output.
+if True, additional linear will be applied.
+i.e. x -&gt; x + linear(concat(x, att(x)))
+if False, no additional linear will be applied. i.e. x -&gt; x + att(x)</p></li>
+</ul>
+</dd>
+</dl>
+<p>Construct an DecoderLayer object.</p>
+<dl class="method">
+<dt id="espnet.nets.pytorch_backend.transformer.mixer_layer.MixerLayer.forward">
+<code class="sig-name descname">forward</code><span class="sig-paren">(</span><em class="sig-param">tgt</em>, <em class="sig-param">memory</em>, <em class="sig-param">mask</em>, <em class="sig-param">cache=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/espnet/nets/pytorch_backend/transformer/mixer_layer.html#MixerLayer.forward"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#espnet.nets.pytorch_backend.transformer.mixer_layer.MixerLayer.forward" title="Permalink to this definition">¶</a></dt>
+<dd><p>Compute decoded features.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>tgt</strong> (<em>torch.Tensor</em>) – Input tensor (#batch, maxlen_out, size).</p></li>
+<li><p><strong>tgt_mask</strong> (<em>torch.Tensor</em>) – Mask for input tensor (#batch, maxlen_out).</p></li>
+<li><p><strong>memory</strong> (<em>torch.Tensor</em>) – Encoded memory, float32 (#batch, maxlen_in, size).</p></li>
+<li><p><strong>memory_mask</strong> (<em>torch.Tensor</em>) – Encoded memory mask (#batch, maxlen_in).</p></li>
+<li><p><strong>cache</strong> (<em>List</em><em>[</em><em>torch.Tensor</em><em>]</em>) – List of cached tensors.
+Each tensor shape should be (#batch, maxlen_out - 1, size).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Output tensor(#batch, maxlen_out, size).
+torch.Tensor: Mask for output tensor (#batch, maxlen_out).
+torch.Tensor: Encoded memory (#batch, maxlen_in, size).
+torch.Tensor: Encoded memory mask (#batch, maxlen_in).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
 </dd>
 </dl>
 </dd></dl>

@@ -1148,6 +1148,17 @@ espnet.nets.pytorch_backend.transformer.__init__
     :show-inheritance:
 
 
+.. _espnet.nets.pytorch_backend.transformer.mixer:
+
+espnet.nets.pytorch_backend.transformer.mixer
+---------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.transformer.mixer
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
 .. _espnet.nets.pytorch_backend.transformer.encoder_layer:
 
 espnet.nets.pytorch_backend.transformer.encoder_layer
@@ -1269,6 +1280,17 @@ espnet.nets.pytorch_backend.transformer.attention
     :show-inheritance:
 
 
+.. _espnet.nets.pytorch_backend.transformer.tracer:
+
+espnet.nets.pytorch_backend.transformer.tracer
+----------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.transformer.tracer
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
 .. _espnet.nets.pytorch_backend.transformer.positionwise_feed_forward:
 
 espnet.nets.pytorch_backend.transformer.positionwise_feed_forward
@@ -1286,6 +1308,17 @@ espnet.nets.pytorch_backend.transformer.layer_norm
 --------------------------------------------------
 
 .. automodule:: espnet.nets.pytorch_backend.transformer.layer_norm
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet.nets.pytorch_backend.transformer.reparametrize:
+
+espnet.nets.pytorch_backend.transformer.reparametrize
+-----------------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.transformer.reparametrize
     :members:
     :undoc-members:
     :show-inheritance:
@@ -1396,6 +1429,17 @@ espnet.nets.pytorch_backend.transformer.dynamic_conv
 ----------------------------------------------------
 
 .. automodule:: espnet.nets.pytorch_backend.transformer.dynamic_conv
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
+.. _espnet.nets.pytorch_backend.transformer.mixer_layer:
+
+espnet.nets.pytorch_backend.transformer.mixer_layer
+---------------------------------------------------
+
+.. automodule:: espnet.nets.pytorch_backend.transformer.mixer_layer
     :members:
     :undoc-members:
     :show-inheritance:
