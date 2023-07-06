@@ -2,8 +2,8 @@
 
 cd ./egs2/ljspeech/tts1
 . ./path.sh
-. ./run.sh --stage 6 \
-    --stop_stage 6 \
+. ./run.sh --stage 7 \
+    --stop_stage 7 \
     --inference_nj 8 \
     --train_set tr_no_dev_phn \
     --valid_set dev_phn\
@@ -14,15 +14,12 @@ cd ./egs2/ljspeech/tts1
     --train_args \
     "\
     --use_wandb true \
-    --wandb_name gw_mfa_nearest \
-    --batch_bins 1500000 \
-    --accum_grad 16 \
-    --tts_conf lr_before=false \
+    --wandb_name mfa \
     "\
     --teacher_dumpdir data \
     --tts_stats_dir exp/mfa_stats \
     --expdir exp/fastspeech2 \
-    --tts_exp exp/fastspeech2/gw_mfa_nearest \
+    --tts_exp exp/fastspeech2/mfa \
     --write_collected_feats true \
     --srctexts data/local/mfa/text \
     --inference_model valid.loss.best.pth \

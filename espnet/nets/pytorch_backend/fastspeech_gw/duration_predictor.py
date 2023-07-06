@@ -9,7 +9,10 @@
 import torch
 from gw.utils import LPF
 
+from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder
+from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
+from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet2.tts.fastspeech2.variance_predictor import VariancePredictor
 from espnet2.layers.stft import Stft
 
@@ -191,3 +194,138 @@ class DurationPredictorLoss(torch.nn.Module):
         c = torch.linspace(0,1,fs.size(-1),device=fs.device).square()
         return self.lam*torch.mean(fs@c)
 
+class GWsignalPredictor(torch.nn.Module):
+    """GW signal predictor module.
+    """
+
+    def __init__(
+        self, 
+        tdim, 
+        fdim,
+        odim=1, 
+        n_layers=2, 
+        n_chans=384, 
+        kernel_size=3,
+        n_head=4,
+        n_feat=384,
+        dropout_rate=0.1, 
+    ):
+        """Initilize duration predictor module.
+
+        Args:
+            idim (int): Input dimension.
+            n_layers (int, optional): Number of convolutional layers.
+            n_chans (int, optional): Number of channels of convolutional layers.
+            kernel_size (int, optional): Kernel size of convolutional layers.
+            dropout_rate (float, optional): Dropout rate.
+
+        """
+        super(GWsignalPredictor, self).__init__()
+        self.embed_text = torch.nn.Sequential(
+            torch.nn.Embedding(tdim, n_chans),
+            PositionalEncoding(n_chans, dropout_rate),
+        )
+        
+        self.embed_feat = torch.nn.Sequential(
+            torch.nn.Linear(fdim, n_chans),
+            PositionalEncoding(n_chans, dropout_rate),
+        )
+            
+        self.conv_text = torch.nn.ModuleList()
+        for idx in range(n_layers):
+            in_chans = n_chans
+            self.conv_text += [
+                torch.nn.Sequential(
+                    torch.nn.Conv1d(
+                        in_chans,
+                        n_chans,
+                        kernel_size,
+                        stride=1,
+                        padding=(kernel_size - 1) // 2,
+                    ),
+                    torch.nn.ReLU(),
+                    LayerNorm(n_chans, dim=1),
+                    torch.nn.Dropout(dropout_rate),
+                )
+            ]
+        self.linear_text = torch.nn.Linear(n_chans, n_feat)
+        
+        self.conv_feat = torch.nn.ModuleList()
+        for idx in range(n_layers):
+            in_chans = n_chans
+            self.conv_feat += [
+                torch.nn.Sequential(
+                    torch.nn.Conv1d(
+                        in_chans,
+                        n_chans,
+                        kernel_size,
+                        stride=1,
+                        padding=(kernel_size - 1) // 2,
+                    ),
+                    torch.nn.ReLU(),
+                    LayerNorm(n_chans, dim=1),
+                    torch.nn.Dropout(dropout_rate),
+                )
+            ]
+        self.linear_feat = torch.nn.Linear(n_chans, n_feat)
+        
+        self.conv_out = torch.nn.ModuleList()
+        for idx in range(n_layers):
+            in_chans = n_feat if idx == 0 else n_chans
+            self.conv_out += [
+                torch.nn.Sequential(
+                    torch.nn.Conv1d(
+                        in_chans,
+                        n_chans,
+                        kernel_size,
+                        stride=1,
+                        padding=(kernel_size - 1) // 2,
+                    ),
+                    torch.nn.ReLU(),
+                    LayerNorm(n_chans, dim=1),
+                    torch.nn.Dropout(dropout_rate),
+                )
+            ]
+        self.linear_out = torch.nn.Linear(n_chans, odim)
+        
+        self.attn = MultiHeadedAttention(n_head, n_feat, dropout_rate)
+        self.norm_text = LayerNorm(n_feat, dim=-1)
+        self.norm_feat = LayerNorm(n_feat, dim=-1)
+
+    def forward(self, texts, feats, text_masks, feat_masks):
+        """Calculate forward propagation.
+
+        Args:
+            texts (Tensor): Batch of input texts (B, Ttext).
+            feats (Tensor): Batch of target feature (B, Tfeat, fdim).
+            text_masks (ByteTensor, optional): Batch of masks indicating padded part (B, Ttext, 1).
+            feat_masks (ByteTensor, optional): Batch of masks indicating padded part (B, Tfeat, 1).
+
+        Returns:
+            Tensor: Batch of predicted durations in log domain (B, Tfeat).
+
+        """
+        xs = self.embed_text(texts).transpose(1, -1)  # (B, C, Ttext)
+        for f in self.conv_text:
+            xs = f(xs)  # (B, C, Tmax)
+
+        text_emb = self.norm_text(self.linear_text(xs.transpose(1, -1)))  # (B, Ttext, n_feat)
+        
+        xs = self.embed_feat(feats).transpose(1, -1)  # (B, C, Tfeat)
+        for f in self.conv_feat:
+            xs = f(xs)  # (B, C, Tfeat)
+
+        feat_emb = self.norm_feat(self.linear_feat(xs.transpose(1, -1)))  # (B, Tfeat, n_feat)
+        
+        masks = torch.logical_not(torch.logical_or(feat_masks.unsqueeze(-1), text_masks.unsqueeze(-2)))
+        xs = feat_emb + self.attn(feat_emb, text_emb, text_emb, masks)  # (B, Tfeat, n_feat)
+        
+        xs = xs.transpose(1, -1)  # (B, n_feat, Tfeat)
+        for f in self.conv_out:
+            xs = f(xs)  # (B, C, Tfeat)
+
+        xs = self.linear_out(xs.transpose(1, -1))  # (B, Tfeat, odim)
+
+        xs = xs.masked_fill(feat_masks.unsqueeze(-1), 0.0)  # (B, Tfeat, odim)
+
+        return xs

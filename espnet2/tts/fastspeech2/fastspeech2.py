@@ -32,7 +32,7 @@ from espnet.nets.pytorch_backend.transformer.encoder import (
 )
 
 
-class FastSpeech2org(AbsTTS):
+class FastSpeech2(AbsTTS):
     """FastSpeech2 module.
 
     This is a module of FastSpeech2 described in `FastSpeech 2: Fast and
@@ -776,7 +776,7 @@ class FastSpeech2org(AbsTTS):
         if spemb is not None:
             spembs = spemb.unsqueeze(0)
 
-        if use_teacher_forcing:
+        if use_teacher_forcing and False:
             # use groundtruth of duration, pitch, and energy
             ds, ps, es = d.unsqueeze(0), p.unsqueeze(0), e.unsqueeze(0)
             _, outs, d_outs, p_outs, e_outs = self._forward(
@@ -801,13 +801,18 @@ class FastSpeech2org(AbsTTS):
                 is_inference=True,
                 alpha=alpha,
             )  # (1, T_feats, odim)
+            
+        l = max(feats.size(-2), outs.size(-2))
 
         return dict(
             feat_gen=outs[0],
             duration=d_outs[0],
             pitch=p_outs[0],
             energy=e_outs[0],
-            feats=torch.cat([feats, outs], dim=0)
+            feats=torch.cat([
+                F.pad(feats.unsqueeze(0), [0, 0, 0, l-feats.size(-2)]), 
+                F.pad(outs, [0, 0, 0, l-outs.size(-2)])
+            ], dim=0)
         )
 
     def _integrate_with_spk_embed(
@@ -870,7 +875,7 @@ class FastSpeech2org(AbsTTS):
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
             self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
 
-class FastSpeech2(AbsTTS):
+class FastSpeech2gw(AbsTTS):
     """FastSpeech2 module.
 
     This is a module of FastSpeech2 described in `FastSpeech 2: Fast and
@@ -1674,7 +1679,7 @@ class FastSpeech2(AbsTTS):
             duration=torch.zeros_like(p_outs[0]),
             pitch=p_outs[0],
             energy=e_outs[0],
-            feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
+            feats=torch.cat([feats.unsqueeze(0), outs[0]], dim=0),
             att_w=d_outs[0]
         )
 
