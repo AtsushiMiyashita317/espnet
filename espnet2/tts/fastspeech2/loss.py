@@ -18,23 +18,24 @@ from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegula
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator as GW
 
 class DurationPredictorLoss(torch.nn.Module):
-    def __init__(self, lr_before=True) -> None:
+    def __init__(self, lr_before=True, lr_mode='nearest') -> None:
         super().__init__()
         self.lr = LengthRegulator()
         self.gw = GW(sr=1)
         self.mse = torch.nn.MSELoss(reduction='none')
         self.lr_before = lr_before
+        self.lr_mode = lr_mode
         
     def forward(self, d_outs, ds, ilens, olens):
         xs = torch.arange(ds.size(-1), 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
         ys = self.lr.forward(xs, ds)
         if not self.lr_before:
-            xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
+            xs = gw.utils.interpolate(xs, ilens, olens, mode=self.lr_mode)
         y_outs = self.gw.warp(xs, d_outs)
         masks = make_pad_mask(ilens if self.lr_before else olens).to(ds.device)
         y_outs = y_outs.masked_fill(masks.unsqueeze(-1), 0.0)
         if self.lr_before:
-            y_outs = gw.utils.interpolate(y_outs, ilens, olens, mode='nearest')
+            y_outs = gw.utils.interpolate(y_outs, ilens, olens, mode=self.lr_mode)
         loss = self.mse.forward(y_outs, ys).squeeze(-1)
         masks = make_non_pad_mask(olens).to(ds.device)
         return loss.masked_select(masks).mean()  
@@ -165,6 +166,7 @@ class FastSpeech2Loss(torch.nn.Module):
         use_weighted_masking: bool = False, 
         token_average: bool = True,
         lr_before: bool = True,
+        lr_mode: bool = 'nearest',
     ):
         """Initialize feed-forward Transformer loss module.
 
@@ -189,7 +191,7 @@ class FastSpeech2Loss(torch.nn.Module):
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
-        self.duration_criterion = DurationPredictorLoss(lr_before=lr_before)
+        self.duration_criterion = DurationPredictorLoss(lr_before=lr_before, lr_mode=lr_mode)
 
     def forward(
         self,

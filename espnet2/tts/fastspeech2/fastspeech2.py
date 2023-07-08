@@ -974,7 +974,8 @@ class FastSpeech2(AbsTTS):
         use_masking: bool = False,
         use_weighted_masking: bool = False,
         token_average: bool = True,
-        lr_before: bool = True
+        lr_before: bool = True,
+        lr_mode: str = "nearest"
     ):
         """Initialize FastSpeech2 module.
 
@@ -1381,13 +1382,15 @@ class FastSpeech2(AbsTTS):
             use_masking=use_masking, 
             use_weighted_masking=use_weighted_masking, 
             token_average=token_average,
-            lr_before=lr_before
+            lr_before=lr_before,
+            mode=lr_mode
         )
         
         assert token_average
         assert not lr_before
         self.token_average = token_average
         self.lr_before = lr_before
+        self.lr_mode = lr_mode
 
     def forward(
         self,
@@ -1595,9 +1598,9 @@ class FastSpeech2(AbsTTS):
             hs = hs + e_embs + p_embs
 
         if is_inference:
-            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+            hs = gw.utils.interpolate(hs, ilens, olens, mode=self.lr_mode)
         else:
-            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+            hs = gw.utils.interpolate(hs, ilens, olens, mode=self.lr_mode)
             
         # forward decoder
         if olens is not None and not is_inference:
