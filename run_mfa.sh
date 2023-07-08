@@ -2,8 +2,8 @@
 
 cd ./egs2/ljspeech/tts1
 . ./path.sh
-. ./run.sh --stage 7 \
-    --stop_stage 7 \
+. ./run.sh --stage 6 \
+    --stop_stage 6 \
     --inference_nj 8 \
     --train_set tr_no_dev_phn \
     --valid_set dev_phn\

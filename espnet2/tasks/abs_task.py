@@ -336,6 +336,13 @@ class AbsTask(ABC):
             help="The number images to plot the outputs from model. "
             "We can also disable the feats plot by setting it 0",
         )
+        group.add_argument(
+            "--batch_midspecs",
+            type=int,
+            default=100,
+            help="The batch size to calculate the spectrum of intermediate feature. "
+            "We can also disable the plot by setting it 0",
+        )
         group = parser.add_argument_group("distributed training related")
         group.add_argument(
             "--dist_backend",
@@ -1327,6 +1334,15 @@ class AbsTask(ABC):
             else:
                 plot_feats_iter_factory = None
 
+            if args.batch_midspecs != 0:
+                plot_midspecs_iter_factory = cls.build_iter_factory(
+                    args=args,
+                    distributed_option=distributed_option,
+                    mode="plot_midspecs",
+                )
+            else:
+                plot_midspecs_iter_factory = None
+
             # 8. Start training
             if args.use_wandb:
                 if wandb is None:
@@ -1379,6 +1395,7 @@ class AbsTask(ABC):
                 valid_iter_factory=valid_iter_factory,
                 plot_attention_iter_factory=plot_attention_iter_factory,
                 plot_feats_iter_factory=plot_feats_iter_factory,
+                plot_midspecs_iter_factory=plot_midspecs_iter_factory,
                 trainer_options=trainer_options,
                 distributed_option=distributed_option,
             )
@@ -1462,6 +1479,22 @@ class AbsTask(ABC):
             batch_size = 1
             batch_bins = 0
             num_batches = args.num_feats_plot
+            max_cache_fd = args.max_cache_fd
+            # num_att_plot should be a few sample ~ 3, so cache all data.
+            max_cache_size = np.inf if args.max_cache_size != 0.0 else 0.0
+            # always False because plot_attention performs on RANK0
+            distributed = False
+            num_iters_per_epoch = None
+            train = False
+        elif mode == "plot_midspecs":
+            preprocess_fn = cls.build_preprocess_fn(args, train=False)
+            collate_fn = cls.build_collate_fn(args, train=False)
+            data_path_and_name_and_type = args.valid_data_path_and_name_and_type
+            shape_files = args.valid_shape_file
+            batch_type = "unsorted"
+            batch_size = args.batch_midspecs
+            batch_bins = 0
+            num_batches = 1
             max_cache_fd = args.max_cache_fd
             # num_att_plot should be a few sample ~ 3, so cache all data.
             max_cache_size = np.inf if args.max_cache_size != 0.0 else 0.0

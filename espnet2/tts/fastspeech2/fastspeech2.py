@@ -4,7 +4,7 @@
 """Fastspeech2 related modules for ESPnet2."""
 
 import logging
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Union, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -32,7 +32,7 @@ from espnet.nets.pytorch_backend.transformer.encoder import (
 )
 
 
-class FastSpeech2(AbsTTS):
+class FastSpeech2org(AbsTTS):
     """FastSpeech2 module.
 
     This is a module of FastSpeech2 described in `FastSpeech 2: Fast and
@@ -875,7 +875,7 @@ class FastSpeech2(AbsTTS):
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
             self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
 
-class FastSpeech2gw(AbsTTS):
+class FastSpeech2(AbsTTS):
     """FastSpeech2 module.
 
     This is a module of FastSpeech2 described in `FastSpeech 2: Fast and
@@ -899,7 +899,7 @@ class FastSpeech2gw(AbsTTS):
         aheads: int = 4,
         elayers: int = 6,
         eunits: int = 1536,
-        dlayers: int = 6,
+        dlayers: Union[int, list] = 6,
         dunits: int = 1536,
         postnet_layers: int = 5,
         postnet_chans: int = 512,
@@ -1249,51 +1249,105 @@ class FastSpeech2gw(AbsTTS):
         )
 
         # define length regulator
-        self.length_regulator = LengthRegulator()
         self.gw = GW(sr=1)
 
         # define decoder
         # NOTE: we use encoder as decoder
         # because fastspeech's decoder is the same as encoder
+        if type(dlayers) is int:
+            dlayers1 = 0
+            dlayers2 = dlayers
+        elif type(dlayers) is list:
+            dlayers1 = dlayers[0]
+            dlayers2 = dlayers[1]
         if decoder_type == "transformer":
-            self.decoder = TransformerEncoder(
-                idim=0,
-                attention_dim=adim,
-                attention_heads=aheads,
-                linear_units=dunits,
-                num_blocks=dlayers,
-                input_layer=None,
-                dropout_rate=transformer_dec_dropout_rate,
-                positional_dropout_rate=transformer_dec_positional_dropout_rate,
-                attention_dropout_rate=transformer_dec_attn_dropout_rate,
-                pos_enc_class=pos_enc_class,
-                normalize_before=decoder_normalize_before,
-                concat_after=decoder_concat_after,
-                positionwise_layer_type=positionwise_layer_type,
-                positionwise_conv_kernel_size=positionwise_conv_kernel_size,
-            )
+            if dlayers1 > 0:
+                self.decoder1 = TransformerEncoder(
+                    idim=0,
+                    attention_dim=adim,
+                    attention_heads=aheads,
+                    linear_units=dunits,
+                    num_blocks=dlayers1,
+                    input_layer=None,
+                    dropout_rate=transformer_dec_dropout_rate,
+                    positional_dropout_rate=transformer_dec_positional_dropout_rate,
+                    attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                    pos_enc_class=pos_enc_class,
+                    normalize_before=decoder_normalize_before,
+                    concat_after=decoder_concat_after,
+                    positionwise_layer_type=positionwise_layer_type,
+                    positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+                )
+            else:
+                self.decoder1 = None
+            if dlayers2 > 0:
+                self.decoder2 = TransformerEncoder(
+                    idim=0,
+                    attention_dim=adim,
+                    attention_heads=aheads,
+                    linear_units=dunits,
+                    num_blocks=dlayers2,
+                    input_layer=None,
+                    dropout_rate=transformer_dec_dropout_rate,
+                    positional_dropout_rate=transformer_dec_positional_dropout_rate,
+                    attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                    pos_enc_class=pos_enc_class,
+                    normalize_before=decoder_normalize_before,
+                    concat_after=decoder_concat_after,
+                    positionwise_layer_type=positionwise_layer_type,
+                    positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+                )
+            else:
+                self.decoder2 = None
         elif decoder_type == "conformer":
-            self.decoder = ConformerEncoder(
-                idim=0,
-                attention_dim=adim,
-                attention_heads=aheads,
-                linear_units=dunits,
-                num_blocks=dlayers,
-                input_layer=None,
-                dropout_rate=transformer_dec_dropout_rate,
-                positional_dropout_rate=transformer_dec_positional_dropout_rate,
-                attention_dropout_rate=transformer_dec_attn_dropout_rate,
-                normalize_before=decoder_normalize_before,
-                concat_after=decoder_concat_after,
-                positionwise_layer_type=positionwise_layer_type,
-                positionwise_conv_kernel_size=positionwise_conv_kernel_size,
-                macaron_style=use_macaron_style_in_conformer,
-                pos_enc_layer_type=conformer_pos_enc_layer_type,
-                selfattention_layer_type=conformer_self_attn_layer_type,
-                activation_type=conformer_activation_type,
-                use_cnn_module=use_cnn_in_conformer,
-                cnn_module_kernel=conformer_dec_kernel_size,
-            )
+            if dlayers1 > 0:
+                self.decoder1 = ConformerEncoder(
+                    idim=0,
+                    attention_dim=adim,
+                    attention_heads=aheads,
+                    linear_units=dunits,
+                    num_blocks=dlayers1,
+                    input_layer=None,
+                    dropout_rate=transformer_dec_dropout_rate,
+                    positional_dropout_rate=transformer_dec_positional_dropout_rate,
+                    attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                    normalize_before=decoder_normalize_before,
+                    concat_after=decoder_concat_after,
+                    positionwise_layer_type=positionwise_layer_type,
+                    positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+                    macaron_style=use_macaron_style_in_conformer,
+                    pos_enc_layer_type=conformer_pos_enc_layer_type,
+                    selfattention_layer_type=conformer_self_attn_layer_type,
+                    activation_type=conformer_activation_type,
+                    use_cnn_module=use_cnn_in_conformer,
+                    cnn_module_kernel=conformer_dec_kernel_size,
+                )
+            else:
+                self.decoder1 = None
+            if dlayers2 > 0:
+                self.decoder2 = ConformerEncoder(
+                    idim=0,
+                    attention_dim=adim,
+                    attention_heads=aheads,
+                    linear_units=dunits,
+                    num_blocks=dlayers2,
+                    input_layer=None,
+                    dropout_rate=transformer_dec_dropout_rate,
+                    positional_dropout_rate=transformer_dec_positional_dropout_rate,
+                    attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                    normalize_before=decoder_normalize_before,
+                    concat_after=decoder_concat_after,
+                    positionwise_layer_type=positionwise_layer_type,
+                    positionwise_conv_kernel_size=positionwise_conv_kernel_size,
+                    macaron_style=use_macaron_style_in_conformer,
+                    pos_enc_layer_type=conformer_pos_enc_layer_type,
+                    selfattention_layer_type=conformer_self_attn_layer_type,
+                    activation_type=conformer_activation_type,
+                    use_cnn_module=use_cnn_in_conformer,
+                    cnn_module_kernel=conformer_dec_kernel_size,
+                )
+            else:
+                self.decoder2 = None
         else:
             raise ValueError(f"{decoder_type} is not supported.")
 
@@ -1330,6 +1384,8 @@ class FastSpeech2gw(AbsTTS):
             lr_before=lr_before
         )
         
+        assert token_average
+        assert not lr_before
         self.token_average = token_average
         self.lr_before = lr_before
 
@@ -1445,8 +1501,12 @@ class FastSpeech2gw(AbsTTS):
                 encoder_alpha=self.encoder.embed[-1].alpha.data.item(),
             )
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
+            if self.decoder1 is not None:
+                alpha = self.decoder1.embed[-1].alpha.data.item()
+            if self.decoder2 is not None:
+                alpha = self.decoder2.embed[-1].alpha.data.item()
             stats.update(
-                decoder_alpha=self.decoder.embed[-1].alpha.data.item(),
+                decoder_alpha=alpha,
             )
 
         if not joint_training:
@@ -1511,30 +1571,7 @@ class FastSpeech2gw(AbsTTS):
         # integrate speaker embedding
         if self.spk_embed_dim is not None:
             hs = self._integrate_with_spk_embed(hs, spembs)
-
-        # forward duration predictor and variance predictors
-        if self.lr_before:
-            d_outs = self.duration_predictor(hs, i_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
-        else:
-            d_outs = self.duration_predictor(
-                gw.utils.interpolate(hs, ilens, olens), 
-                o_masks.unsqueeze(-1)
-            ).squeeze(-1)  # (B, T_text)
-        
-        if not self.token_average:
-            if is_inference:
-                if not self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-                hs, d_outs = self.gw(hs, d_outs)  # (B, T_feats, adim)
-                if self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-            else:
-                if not self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-                hs, d_outs = self.gw(hs, d_outs, grad_stop=True)
-                if self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-                    
+              
         d_masks = i_masks if self.token_average else o_masks
         
         if self.stop_gradient_from_pitch_predictor:
@@ -1557,19 +1594,10 @@ class FastSpeech2gw(AbsTTS):
             e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
             hs = hs + e_embs + p_embs
 
-        if self.token_average:
-            if is_inference:
-                if not self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-                hs, d_outs = self.gw(hs, d_outs)  # (B, T_feats, adim)
-                if self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-            else:
-                if not self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-                hs, d_outs = self.gw(hs, d_outs, grad_stop=True)
-                if self.lr_before:
-                    hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+        if is_inference:
+            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+        else:
+            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
             
         # forward decoder
         if olens is not None and not is_inference:
@@ -1580,7 +1608,16 @@ class FastSpeech2gw(AbsTTS):
             h_masks = self._source_mask(olens_in)
         else:
             h_masks = None
-        zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
+        if self.decoder1 is not None:
+            hs, _ = self.decoder1(hs, h_masks)  # (B, T_feats, adim)
+        
+        # forward duration predictor
+        d_outs = self.duration_predictor(hs, o_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
+        hs, d_outs = self.gw(hs, d_outs, grad_stop=True)
+        
+        if self.decoder2 is not None:
+            hs, _ = self.decoder2(hs, h_masks)  # (B, T_feats, adim)
+        zs = hs
         before_outs = self.feat_out(zs).view(
             zs.size(0), -1, self.odim
         )  # (B, T_feats, odim)
@@ -1741,4 +1778,7 @@ class FastSpeech2gw(AbsTTS):
         if self.encoder_type == "transformer" and self.use_scaled_pos_enc:
             self.encoder.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
-            self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            if self.decoder1 is not None:
+                self.decoder1.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+            if self.decoder2 is not None:
+                self.decoder2.embed[-1].alpha.data = torch.tensor(init_dec_alpha)

@@ -18,7 +18,7 @@ from typeguard import check_argument_types
 
 from espnet2.iterators.abs_iter_factory import AbsIterFactory
 from espnet2.main_funcs.average_nbest_models import average_nbest_models
-from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions, calculate_feats
+from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions, calculate_feats, calculate_midspecs
 from espnet2.schedulers.abs_scheduler import (
     AbsBatchStepScheduler,
     AbsEpochStepScheduler,
@@ -168,6 +168,7 @@ class Trainer:
         valid_iter_factory: AbsIterFactory,
         plot_attention_iter_factory: Optional[AbsIterFactory],
         plot_feats_iter_factory: Optional[AbsIterFactory],
+        plot_midspecs_iter_factory: Optional[AbsIterFactory],
         trainer_options,
         distributed_option: DistributedOption,
     ) -> None:
@@ -327,6 +328,16 @@ class Trainer:
                             output_dir=output_dir / "feats",
                             summary_writer=train_summary_writer,
                             iterator=plot_feats_iter_factory.build_iter(iepoch),
+                            reporter=sub_reporter,
+                            options=trainer_options,
+                        )
+                if plot_midspecs_iter_factory is not None:
+                    with reporter.observe("midspecs_plot") as sub_reporter:
+                        cls.plot_midspecs(
+                            model=model,
+                            output_dir=output_dir / "midspecs",
+                            summary_writer=train_summary_writer,
+                            iterator=plot_midspecs_iter_factory.build_iter(iepoch),
                             reporter=sub_reporter,
                             options=trainer_options,
                         )
@@ -965,3 +976,75 @@ class Trainer:
 
                     wandb.log({f"feats plot/{id_}": wandb.Image(fig)})
             reporter.next()
+    
+    @classmethod
+    @torch.no_grad()
+    def plot_midspecs(
+        cls,
+        model: torch.nn.Module,
+        output_dir: Optional[Path],
+        summary_writer,
+        iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
+        reporter: SubReporter,
+        options: TrainerOptions,
+    ) -> None:
+        assert check_argument_types()
+        import matplotlib
+
+        ngpu = options.ngpu
+        no_forward_run = options.no_forward_run
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+
+        model.eval()
+        for ids, batch in iterator:
+            assert isinstance(batch, dict), type(batch)
+            assert len(next(iter(batch.values()))) == len(ids), (
+                len(next(iter(batch.values()))),
+                len(ids),
+            )
+
+            batch["utt_id"] = ids
+
+            batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
+            if no_forward_run:
+                continue
+
+            # 1. Forwarding model and gathering all attentions
+            #    calculate_all_attentions() uses single gpu only.
+            midspec_dict = calculate_midspecs(model, batch)
+
+            # 2. Plot attentions: This part is slow due to matplotlib
+            w, h = plt.figaspect(1.0)
+            fig = plt.Figure(figsize=(w * 1.3, h * 1.3))
+            ax = fig.subplots(1, 1)
+            ax.set_title(f"Spectrum of intermediate features")
+            ax.set_xlabel("Frequency")
+            ax.set_ylabel("Amplitude")
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+            for k, midspec in midspec_dict.items():
+                if isinstance(midspec, torch.Tensor):
+                    midspec = midspec.detach().cpu().numpy()
+                ax.plot(midspec, label=k)
+            ax.legend()
+
+            if output_dir is not None:
+                p = output_dir / f"{reporter.get_epoch()}ep.png"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(p)
+
+            if summary_writer is not None:
+                summary_writer.add_figure(
+                    "midspec", fig, reporter.get_epoch()
+                )
+
+            if options.use_wandb:
+                import wandb
+
+                wandb.log({f"midspec plot": wandb.Image(fig)})
+            reporter.next()
+

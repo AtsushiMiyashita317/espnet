@@ -24,6 +24,7 @@ from espnet.nets.pytorch_backend.rnn.attentions import (
     NoAtt,
 )
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
+from espnet.nets.pytorch_backend.transformer.encoder_layer import EncoderLayer
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
 
 
@@ -246,3 +247,83 @@ def calculate_feats(
         handle.remove()
 
     return return_list
+
+@torch.no_grad()
+def calculate_midspecs(
+    model: AbsESPnetModel, batch: Dict[str, torch.Tensor], n_fft:int=64
+) -> Dict[str, List[torch.Tensor]]:
+    """Derive the outputs from the all attention layers
+
+    Args:
+        model:
+        batch: same as forward
+    Returns:
+        return_dict: A dict of a list of tensor.
+        key_names x batch x (D1, D2, ...)
+
+    """
+    bs = len(next(iter(batch.values())))
+    assert all(len(v) == bs for v in batch.values()), {
+        k: v.shape for k, v in batch.items()
+    }
+
+    # 1. Register forward_hook fn to save the output from specific layers
+    outputs = {}
+    handles = {}
+    for name, modu in model.named_modules():
+        def hook(module, input, output, name=name):
+            if isinstance(module, EncoderLayer):
+                x, mask = output
+                if x.size(-2) >= n_fft:
+                    x = x.squeeze(0).transpose(-2,-1)
+                    x = torch.stft(x, n_fft, return_complex=True).abs().add(1e-10).log()
+                    outputs[name] = x.detach().cpu()
+                        
+        handle = modu.register_forward_hook(hook)
+        handles[name] = handle
+
+    # 2. Just forward one by one sample.
+    # Batch-mode can't be used to keep requirements small for each models.
+    keys = []
+    for k in batch:
+        if not (k.endswith("_lengths") or k in ["utt_id"]):
+            keys.append(k)
+
+    return_dict = defaultdict(list)
+    for ibatch in range(bs):
+        # *: (B, L, ...) -> (1, L2, ...)
+        _sample = {
+            k: batch[k][ibatch, None, : batch[k + "_lengths"][ibatch]]
+            if k + "_lengths" in batch
+            else batch[k][ibatch, None]
+            for k in keys
+        }
+
+        # *_lengths: (B,) -> (1,)
+        _sample.update(
+            {
+                k + "_lengths": batch[k + "_lengths"][ibatch, None]
+                for k in keys
+                if k + "_lengths" in batch
+            }
+        )
+
+        if "utt_id" in batch:
+            _sample["utt_id"] = batch["utt_id"]
+
+        model(**_sample)
+
+        # Derive the attention results
+        for name, output in outputs.items():
+            return_dict[name].append(output)
+        outputs.clear()
+    
+    for name in return_dict:
+        return_dict[name] = torch.cat(return_dict[name],dim=-1).mean(-1).mean(0)
+
+    # 3. Remove all hooks
+    for _, handle in handles.items():
+        handle.remove()
+
+    return dict(return_dict)
+
