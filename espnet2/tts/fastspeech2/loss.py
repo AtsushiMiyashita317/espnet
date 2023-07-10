@@ -166,7 +166,7 @@ class FastSpeech2Loss(torch.nn.Module):
         use_weighted_masking: bool = False, 
         token_average: bool = True,
         lr_before: bool = True,
-        lr_mode: bool = 'nearest',
+        lr_mode: str = 'nearest',
     ):
         """Initialize feed-forward Transformer loss module.
 

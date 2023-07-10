@@ -1383,7 +1383,7 @@ class FastSpeech2(AbsTTS):
             use_weighted_masking=use_weighted_masking, 
             token_average=token_average,
             lr_before=lr_before,
-            mode=lr_mode
+            lr_mode=lr_mode
         )
         
         assert token_average
@@ -1506,11 +1506,14 @@ class FastSpeech2(AbsTTS):
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
             if self.decoder1 is not None:
                 alpha = self.decoder1.embed[-1].alpha.data.item()
-            if self.decoder2 is not None:
+                stats.update(
+                    decoder_alpha=alpha,
+                )
+            elif self.decoder2 is not None:
                 alpha = self.decoder2.embed[-1].alpha.data.item()
-            stats.update(
-                decoder_alpha=alpha,
-            )
+                stats.update(
+                    decoder_alpha=alpha,
+                )
 
         if not joint_training:
             stats.update(loss=loss.item())
