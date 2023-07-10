@@ -1602,8 +1602,10 @@ class FastSpeech2(AbsTTS):
 
         if is_inference:
             hs = gw.utils.interpolate(hs, ilens, olens, mode=self.lr_mode)
+            ks = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
         else:
             hs = gw.utils.interpolate(hs, ilens, olens, mode=self.lr_mode)
+            ks = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
             
         # forward decoder
         if olens is not None and not is_inference:
@@ -1618,7 +1620,7 @@ class FastSpeech2(AbsTTS):
             hs, _ = self.decoder1(hs, h_masks)  # (B, T_feats, adim)
         
         # forward duration predictor
-        d_outs = self.duration_predictor(hs, o_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
+        d_outs = self.duration_predictor(ks, o_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
         hs, d_outs = self.gw(hs, d_outs, grad_stop=True)
         
         if self.decoder2 is not None:
