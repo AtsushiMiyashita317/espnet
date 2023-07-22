@@ -1620,6 +1620,8 @@ class FastSpeech2(AbsTTS):
             hs, _ = self.decoder1(hs, h_masks)  # (B, T_feats, adim)
         
         # forward duration predictor
+        if self.lr_mode != 'zero':
+            ks = hs
         d_outs = self.duration_predictor(ks, o_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
         hs, d_outs = self.gw(hs, d_outs, grad_stop=True)
         
@@ -1724,7 +1726,7 @@ class FastSpeech2(AbsTTS):
             duration=torch.zeros_like(p_outs[0]),
             pitch=p_outs[0],
             energy=e_outs[0],
-            feats=torch.cat([feats.unsqueeze(0), outs[0]], dim=0),
+            feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
             att_w=d_outs[0]
         )
 
