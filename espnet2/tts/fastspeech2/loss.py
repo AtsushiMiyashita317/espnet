@@ -14,10 +14,10 @@ import gw
 # )
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask, make_pad_mask
 from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegulator
-from espnet.nets.pytorch_backend.fastspeech.duration_predictor import DurationPredictorLoss
+# from espnet.nets.pytorch_backend.fastspeech.duration_predictor import DurationPredictorLoss
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator as GW
 
-class DurationPredictorgwLoss(torch.nn.Module):
+class DurationPredictorLoss(torch.nn.Module):
     def __init__(self, lr_before=True) -> None:
         super().__init__()
         self.lr = LengthRegulator()
@@ -26,7 +26,7 @@ class DurationPredictorgwLoss(torch.nn.Module):
         self.lr_before = lr_before
         
     def forward(self, d_outs, ds, ilens, olens):
-        xs = torch.arange(ds.size(-1)-1, 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
+        xs = torch.arange(ds.size(-1), 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
         ys = self.lr.forward(xs, ds)
         if not self.lr_before:
             xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
@@ -36,11 +36,12 @@ class DurationPredictorgwLoss(torch.nn.Module):
         if self.lr_before:
             y_outs = gw.utils.interpolate(y_outs, ilens, olens, mode='nearest')
         loss = self.mse.forward(y_outs, ys).squeeze(-1)
+        clip = loss<10
         masks = make_non_pad_mask(olens).to(ds.device)
-        return loss.masked_select(masks).mean()  
+        return loss.masked_select(torch.logical_and(masks, clip)).mean()  
     
 
-class FastSpeech2Loss(torch.nn.Module):
+class FastSpeech2orgLoss(torch.nn.Module):
     """Loss function module for FastSpeech2."""
 
     def __init__(self, use_masking: bool = True, use_weighted_masking: bool = False, token_average: bool = True):
@@ -156,7 +157,7 @@ class FastSpeech2Loss(torch.nn.Module):
 
         return l1_loss, duration_loss, pitch_loss, energy_loss
 
-class FastSpeech2gwLoss(torch.nn.Module):
+class FastSpeech2Loss(torch.nn.Module):
     """Loss function module for FastSpeech2."""
 
     def __init__(

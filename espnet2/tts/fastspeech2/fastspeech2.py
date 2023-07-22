@@ -1515,29 +1515,15 @@ class FastSpeech2(AbsTTS):
         # forward duration predictor and variance predictors
         if self.lr_before:
             d_outs = self.duration_predictor(hs, i_masks.unsqueeze(-1)).squeeze(-1)  # (B, T_text)
+            d_outs = d_outs - 2*torch.pi*torch.log(olens/ilens).unsqueeze(-1)
             d_outs = d_outs.cumsum(-1)
-            res =   torch.arange(
-                        d_outs.size(-1),
-                        device=d_outs.device
-                    ).mul(
-                        2*torch.pi*torch.log(olens/ilens).unsqueeze(-1)
-                    )
-            d_outs = d_outs - res
-            d_outs = d_outs.masked_fill(i_masks, 0.0)
         else:
             d_outs = self.duration_predictor(
                 gw.utils.interpolate(hs, ilens, olens), 
                 o_masks.unsqueeze(-1)
             ).squeeze(-1)  # (B, T_text)
+            d_outs = d_outs - 2*torch.pi*torch.log(olens/ilens).unsqueeze(-1)
             d_outs = d_outs.cumsum(-1)
-            res =   torch.arange(
-                        d_outs.size(-1),
-                        device=d_outs.device
-                    ).mul(
-                        2*torch.pi*torch.log(olens/ilens).unsqueeze(-1)
-                    )
-            d_outs = d_outs - res
-            d_outs = d_outs.masked_fill(o_masks, 0.0)
         
         if not self.token_average:
             if is_inference:
