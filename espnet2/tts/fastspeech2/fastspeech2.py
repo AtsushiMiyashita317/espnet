@@ -1683,7 +1683,7 @@ class FastSpeech2(AbsTTS):
             duration=torch.zeros_like(p_outs[0]),
             pitch=p_outs[0],
             energy=e_outs[0],
-            feats=torch.cat([feats.unsqueeze(0), outs[0]], dim=0),
+            feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
             att_w=d_outs[0]
         )
 
