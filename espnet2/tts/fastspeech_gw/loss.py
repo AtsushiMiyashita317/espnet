@@ -149,6 +149,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         use_masking: bool = True, 
         use_weighted_masking: bool = False,
         lr_mode: str = 'after',
+        lr_n_fft : int = 80
     ):
         """Initialize feed-forward Transformer loss module.
 
@@ -162,10 +163,12 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         assert check_argument_types()
         super().__init__()
 
-        assert (use_masking != use_weighted_masking) or not use_masking
+        assert use_masking
+        assert not use_weighted_masking
         self.use_masking = use_masking
         self.use_weighted_masking = use_weighted_masking
         self.lr_mode = lr_mode
+        self.hop_length = lr_n_fft//4
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
@@ -214,53 +217,27 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
 
         """
         # apply mask to remove padded part
-        if self.use_masking:
-            out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            before_outs = before_outs.masked_select(out_masks)
-            if after_outs is not None:
-                after_outs = after_outs.masked_select(out_masks)
-            ys = ys.masked_select(out_masks)
-            if self.lr_mode == 'after':
-                duration_masks = make_non_pad_mask(olens).to(ys.device)
-            elif self.lr_mode == 'before':
-                duration_masks = make_non_pad_mask(ilens).to(ys.device)
-            d_outs = d_outs.masked_select(duration_masks)
-            # ds = ds.masked_select(duration_masks)
-            pitch_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            p_outs = p_outs.masked_select(pitch_masks)
-            e_outs = e_outs.masked_select(pitch_masks)
-            ps = ps.masked_select(pitch_masks)
-            es = es.masked_select(pitch_masks)
+        out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
+        before_outs = before_outs.masked_select(out_masks)
+        if after_outs is not None:
+            after_outs = after_outs.masked_select(out_masks)
+        ys = ys.masked_select(out_masks)
+        if self.lr_mode == 'after':
+            duration_masks = make_non_pad_mask(olens//self.hop_length+1).to(ys.device)
+        elif self.lr_mode == 'before':
+            duration_masks = make_non_pad_mask(ilens//self.hop_length+1).to(ys.device)
+        pitch_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
+        p_outs = p_outs.masked_select(pitch_masks)
+        e_outs = e_outs.masked_select(pitch_masks)
+        ps = ps.masked_select(pitch_masks)
+        es = es.masked_select(pitch_masks)
 
         # calculate loss
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(ds_mu, ds_ln_var, d_mu_outs, d_ln_var_outs, duration_masks)
+        duration_loss = self.duration_criterion(ds_mu, ds_ln_var, d_mu_outs, d_ln_var_outs, duration_masks.unsqueeze(-1))
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
-
-        # make weighted mask and apply it
-        if self.use_weighted_masking:
-            out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            out_weights = out_masks.float() / out_masks.sum(dim=1, keepdim=True).float()
-            out_weights /= ys.size(0) * ys.size(2)
-            duration_masks = make_non_pad_mask(ilens).to(ys.device)
-            duration_weights = (
-                duration_masks.float() / duration_masks.sum(dim=1, keepdim=True).float()
-            )
-            duration_weights /= ys.size(0)
-
-            # apply weight
-            l1_loss = l1_loss.mul(out_weights).masked_select(out_masks).sum()
-            duration_loss = (
-                duration_loss.mul(duration_weights).masked_select(duration_masks).sum()
-            )
-            pitch_masks = duration_masks.unsqueeze(-1)
-            pitch_weights = duration_weights.unsqueeze(-1)
-            pitch_loss = pitch_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            energy_loss = (
-                energy_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            )
 
         return l1_loss, duration_loss, pitch_loss, energy_loss

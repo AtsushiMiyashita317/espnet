@@ -15,7 +15,7 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.torch_utils.initialize import initialize
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.fastspeech_gw.loss import FastSpeechGWLoss, VariationalFastSpeechGWLoss
-from espnet2.tts.fastspeech_gw.variational import Sampling, FFTwrapper
+from espnet2.tts.fastspeech_gw.variational import Stft, Istft, Sample
 from espnet2.tts.fastspeech_gw.variance_predictor import VariancePredictor, AlignmentModule
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
 from espnet2.tts.gst.style_encoder import StyleEncoder
@@ -867,7 +867,6 @@ class VariationalFastSpeechGW(AbsTTS):
         postnet_layers: int = 5,
         postnet_chans: int = 512,
         postnet_filts: int = 5,
-        postnet_dropout_rate: float = 0.5,
         positionwise_layer_type: str = "conv1d",
         positionwise_conv_kernel_size: int = 1,
         use_scaled_pos_enc: bool = True,
@@ -879,12 +878,6 @@ class VariationalFastSpeechGW(AbsTTS):
         reduction_factor: int = 1,
         encoder_type: str = "transformer",
         decoder_type: str = "transformer",
-        transformer_enc_dropout_rate: float = 0.1,
-        transformer_enc_positional_dropout_rate: float = 0.1,
-        transformer_enc_attn_dropout_rate: float = 0.1,
-        transformer_dec_dropout_rate: float = 0.1,
-        transformer_dec_positional_dropout_rate: float = 0.1,
-        transformer_dec_attn_dropout_rate: float = 0.1,
         # only for conformer
         conformer_rel_pos_type: str = "legacy",
         conformer_pos_enc_layer_type: str = "rel_pos",
@@ -899,7 +892,6 @@ class VariationalFastSpeechGW(AbsTTS):
         duration_predictor_layers: int = 2,
         duration_predictor_chans: int = 384,
         duration_predictor_kernel_size: int = 3,
-        duration_predictor_dropout_rate: float = 0.1,
         duration_predictor_heads: int = 4,
         duration_predictor_feats: int = 384,
         # energy predictor
@@ -940,6 +932,7 @@ class VariationalFastSpeechGW(AbsTTS):
         use_weighted_masking: bool = False,
         # length regulator
         lr_sr: int = 1,
+        lr_n_fft: int = 80
     ):
         """Initialize FastSpeech2 module.
 
@@ -1098,9 +1091,9 @@ class VariationalFastSpeechGW(AbsTTS):
                 linear_units=eunits,
                 num_blocks=elayers,
                 input_layer=encoder_input_layer,
-                dropout_rate=transformer_enc_dropout_rate,
-                positional_dropout_rate=transformer_enc_positional_dropout_rate,
-                attention_dropout_rate=transformer_enc_attn_dropout_rate,
+                dropout_rate=0.0,
+                positional_dropout_rate=0.0,
+                attention_dropout_rate=0.0,
                 pos_enc_class=pos_enc_class,
                 normalize_before=encoder_normalize_before,
                 concat_after=encoder_concat_after,
@@ -1115,9 +1108,9 @@ class VariationalFastSpeechGW(AbsTTS):
                 linear_units=eunits,
                 num_blocks=elayers,
                 input_layer=encoder_input_layer,
-                dropout_rate=transformer_enc_dropout_rate,
-                positional_dropout_rate=transformer_enc_positional_dropout_rate,
-                attention_dropout_rate=transformer_enc_attn_dropout_rate,
+                dropout_rate=0.0,
+                positional_dropout_rate=0.0,
+                attention_dropout_rate=0.0,
                 normalize_before=encoder_normalize_before,
                 concat_after=encoder_concat_after,
                 positionwise_layer_type=positionwise_layer_type,
@@ -1172,47 +1165,29 @@ class VariationalFastSpeechGW(AbsTTS):
         # define duration predictor
         self.duration_predictor = VariancePredictor(
             idim=adim,
-            odim=2,
+            odim=3,
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             kernel_size=duration_predictor_kernel_size,
-            dropout_rate=duration_predictor_dropout_rate   
+            dropout_rate=0.0   
         )
         
-        # self.alignment_module = AlignmentModule(
-        #     tdim=idim,
-        #     fdim=odim,
-        #     odim=2,
-        #     n_layers=duration_predictor_layers,
-        #     n_chans=duration_predictor_chans,
-        #     kernel_size=duration_predictor_kernel_size,
-        #     n_head=duration_predictor_heads,
-        #     n_feat=duration_predictor_feats,
-        #     dropout_rate=duration_predictor_dropout_rate   
-        # )
-        
-        self.alignment_module = Decoder(
-            odim=2,
-            attention_dim=adim,
-            attention_heads=aheads,
-            linear_units=eunits,
-            num_blocks=duration_predictor_layers,
-            dropout_rate=duration_predictor_dropout_rate,
-            positional_dropout_rate=duration_predictor_dropout_rate,
-            self_attention_dropout_rate=duration_predictor_dropout_rate,
-            src_attention_dropout_rate=duration_predictor_dropout_rate,
-            input_layer=None,
-            pos_enc_class=pos_enc_class,
-            normalize_before=encoder_normalize_before,
-            concat_after=encoder_concat_after
+        self.alignment_module = AlignmentModule(
+            tdim=idim,
+            fdim=odim,
+            odim=3,
+            n_layers=duration_predictor_layers,
+            n_chans=duration_predictor_chans,
+            kernel_size=duration_predictor_kernel_size,
+            n_head=duration_predictor_heads,
+            n_feat=duration_predictor_feats,
+            dropout_rate=0.0   
         )
         
-        self.sampling = FFTwrapper(
-            Sampling(),
-            arg_ref='zs',
-            ret_ref='zs',
-            filter='linear',
-        )
+        self.stft = Stft(n_fft=lr_n_fft)
+        self.istft = Istft()
+        
+        self.sampling = Sample()
 
         # define pitch predictor
         self.pitch_predictor = VariancePredictor(
@@ -1266,9 +1241,9 @@ class VariationalFastSpeechGW(AbsTTS):
                 linear_units=dunits,
                 num_blocks=dlayers,
                 input_layer=None,
-                dropout_rate=transformer_dec_dropout_rate,
-                positional_dropout_rate=transformer_dec_positional_dropout_rate,
-                attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                dropout_rate=0.0,
+                positional_dropout_rate=0.0,
+                attention_dropout_rate=0.0,
                 pos_enc_class=pos_enc_class,
                 normalize_before=decoder_normalize_before,
                 concat_after=decoder_concat_after,
@@ -1283,9 +1258,9 @@ class VariationalFastSpeechGW(AbsTTS):
                 linear_units=dunits,
                 num_blocks=dlayers,
                 input_layer=None,
-                dropout_rate=transformer_dec_dropout_rate,
-                positional_dropout_rate=transformer_dec_positional_dropout_rate,
-                attention_dropout_rate=transformer_dec_attn_dropout_rate,
+                dropout_rate=0.0,
+                positional_dropout_rate=0.0,
+                attention_dropout_rate=0.0,
                 normalize_before=decoder_normalize_before,
                 concat_after=decoder_concat_after,
                 positionwise_layer_type=positionwise_layer_type,
@@ -1314,7 +1289,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 n_chans=postnet_chans,
                 n_filts=postnet_filts,
                 use_batch_norm=use_batch_norm,
-                dropout_rate=postnet_dropout_rate,
+                dropout_rate=0.0,
             )
         )
 
@@ -1330,6 +1305,7 @@ class VariationalFastSpeechGW(AbsTTS):
             use_masking=use_masking, 
             use_weighted_masking=use_weighted_masking,
             lr_mode='after',
+            lr_n_fft=lr_n_fft
         )
 
     def forward(
@@ -1457,9 +1433,25 @@ class VariationalFastSpeechGW(AbsTTS):
             loss, stats, weight = force_gatherable(
                 (loss, stats, batch_size), loss.device
             )
-            return loss, stats, weight
+            return dict(
+                loss=loss, 
+                stats=stats, 
+                outs=weight, 
+                feats=torch.stack(
+                    [feats, before_outs, after_outs] if after_outs is not None else [feats, after_outs],
+                    dim=1
+                )
+            )
         else:
-            return loss, stats, after_outs if after_outs is not None else before_outs
+            return dict(
+                loss=loss, 
+                stats=stats, 
+                outs=after_outs if after_outs is not None else before_outs,
+                feats=torch.stack(
+                    [feats, before_outs, after_outs] if after_outs is not None else [feats, before_outs],
+                    dim=1
+                )
+            )
 
     def _forward(
         self,
@@ -1502,26 +1494,34 @@ class VariationalFastSpeechGW(AbsTTS):
         feat_masks = make_pad_mask(olens).to(xs.device)
         d_masks = make_pad_mask(olens).to(xs.device)      
         
-        hs = gw.utils.interpolate(hs, ilens, olens)
+        hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
         
         if is_inference:
             ds, ds_mu, ds_ln_var = None, None, None
             
             d_outs = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            d_outs = self.sampling(olens, zs=d_outs)
+            mu, std = self.stft(ds)
+            d_outs = self.sampling(mu, std)
             d_outs, d_mu_outs, d_ln_var_outs = d_outs['zs'], d_outs['mu'], d_outs['ln_var']
+            d_outs = self.istft(d_outs)
             
-            hs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
+            hs, d_outs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
         else:
             ds = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
-            ds = self.sampling(olens, zs=ds)
+            n = ds.size(-2)
+            mu, ln_var = self.stft(ds)
+            ds = self.sampling(mu, ln_var)
             ds, ds_mu, ds_ln_var = ds['zs'], ds['mu'], ds['ln_var']
+            ds = self.istft(ds, n)
             
             d_outs = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            d_outs = self.sampling(olens, zs=d_outs)
+            n = d_outs.size(-2)
+            mu, in_var = self.stft(d_outs)
+            d_outs = self.sampling(mu, ln_var)
             d_outs, d_mu_outs, d_ln_var_outs = d_outs['zs'], d_outs['mu'], d_outs['ln_var']
+            d_outs = self.istft(d_outs, n)
             
-            hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
+            hs, d_outs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
                     
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
@@ -1649,14 +1649,13 @@ class VariationalFastSpeechGW(AbsTTS):
                 alpha=alpha,
             )  # (1, T_feats, odim)
 
-        att_w = self.length_regulator(torch.eye(d_outs.size(-1), device=d_outs.device).unsqueeze(0), d_outs)
-
         return dict(
             feat_gen=outs[0],
-            duration=d_outs[0],
+            duration=torch.zeros_like(p_outs[0]),
             pitch=p_outs[0],
             energy=e_outs[0],
-            att_w=att_w[0]
+            feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
+            att_w=d_outs[0]
         )
 
     def _integrate_with_spk_embed(
