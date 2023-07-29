@@ -1516,7 +1516,7 @@ class VariationalFastSpeechGW(AbsTTS):
             
             d_outs = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
             n = d_outs.size(-2)
-            mu, in_var = self.stft(d_outs)
+            mu, ln_var = self.stft(d_outs)
             d_outs = self.sampling(mu, ln_var)
             d_outs, d_mu_outs, d_ln_var_outs = d_outs['zs'], d_outs['mu'], d_outs['ln_var']
             d_outs = self.istft(d_outs, n)
