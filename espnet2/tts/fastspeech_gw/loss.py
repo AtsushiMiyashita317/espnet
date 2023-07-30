@@ -12,7 +12,7 @@ from espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor import (  # no
     DurationPredictorLoss,
 )
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
-from espnet2.tts.fastspeech_gw.variational import KLDivergenceLoss
+from espnet2.tts.fastspeech_gw.variational import KLDivergenceLoss, GaussianNLLLoss
 
 
 class FastSpeechGWLoss(torch.nn.Module):
@@ -172,14 +172,14 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
-        self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
+        self.l1_criterion = GaussianNLLLoss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
         self,
-        after_outs: torch.Tensor,
-        before_outs: torch.Tensor,
+        outs_mu: torch.Tensor,
+        outs_ln_var: torch.Tensor,
         d_outs: torch.Tensor,
         p_outs: torch.Tensor,
         e_outs: torch.Tensor,
@@ -218,14 +218,17 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         """
         # apply mask to remove padded part
         out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-        before_outs = before_outs.masked_select(out_masks)
-        if after_outs is not None:
-            after_outs = after_outs.masked_select(out_masks)
+        outs_mu = outs_mu.masked_select(out_masks)
+        outs_ln_var = outs_ln_var.masked_select(out_masks)
         ys = ys.masked_select(out_masks)
         if self.lr_mode == 'after':
-            duration_masks = make_non_pad_mask(olens//self.hop_length+1).to(ys.device)
+            duration_masks = make_non_pad_mask(olens//self.hop_length+1).to(ys.device).unsqueeze(-1)
         elif self.lr_mode == 'before':
-            duration_masks = make_non_pad_mask(ilens//self.hop_length+1).to(ys.device)
+            duration_masks = make_non_pad_mask(ilens//self.hop_length+1).to(ys.device).unsqueeze(-1)
+        ds_mu = ds_mu.masked_select(duration_masks)
+        ds_ln_var = ds_ln_var.masked_select(duration_masks)
+        d_mu_outs = d_mu_outs.masked_select(duration_masks)
+        d_ln_var_outs = d_ln_var_outs.masked_select(duration_masks)
         pitch_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
         p_outs = p_outs.masked_select(pitch_masks)
         e_outs = e_outs.masked_select(pitch_masks)
@@ -233,10 +236,8 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         es = es.masked_select(pitch_masks)
 
         # calculate loss
-        l1_loss = self.l1_criterion(before_outs, ys)
-        if after_outs is not None:
-            l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(ds_mu, ds_ln_var, d_mu_outs, d_ln_var_outs, duration_masks.unsqueeze(-1))
+        l1_loss = self.l1_criterion(ys, outs_mu, outs_ln_var)
+        duration_loss = self.duration_criterion(ds_mu, ds_ln_var, d_mu_outs, d_ln_var_outs)
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 

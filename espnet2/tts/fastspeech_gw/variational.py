@@ -211,3 +211,28 @@ class KLDivergenceLoss(torch.nn.Module):
         elif self.reduction == 'mean':
             kl_loss = kl_loss.mean()
         return kl_loss
+
+
+class GaussianNLLLoss(torch.nn.Module):
+    """Loss function module for variance predictor.
+    """
+
+    def __init__(self, reduction="mean"):
+        """Initilize duration predictor loss module.
+
+        Args:
+            reduction (str): Reduction type in loss calculation.
+
+        """
+        super(GaussianNLLLoss, self).__init__()
+        self.reduction = reduction
+        
+    def forward(self, target: torch.Tensor, mu: torch.Tensor, log_var: torch.Tensor, masks=None):
+        loss = torch.square(target-mu).mul(0.5).mul(log_var.mul(-1).exp()) + log_var.mul(0.5)
+        if masks is not None:
+            loss = loss.masked_select(masks)
+        if self.reduction == 'sum':
+            loss = loss.sum()
+        elif self.reduction == 'mean':
+            loss = loss.mean()
+        return loss

@@ -1276,22 +1276,11 @@ class VariationalFastSpeechGW(AbsTTS):
             raise ValueError(f"{decoder_type} is not supported.")
 
         # define final projection
-        self.feat_out = torch.nn.Linear(adim, odim * reduction_factor)
+        self.feat_out_mu = torch.nn.Linear(adim, odim * reduction_factor)
+        self.feat_out_ln_var = torch.nn.Linear(adim, odim * reduction_factor)
 
         # define postnet
-        self.postnet = (
-            None
-            if postnet_layers == 0
-            else Postnet(
-                idim=idim,
-                odim=odim,
-                n_layers=postnet_layers,
-                n_chans=postnet_chans,
-                n_filts=postnet_filts,
-                use_batch_norm=use_batch_norm,
-                dropout_rate=0.0,
-            )
-        )
+        self.postnet = None
 
         # initialize parameters
         self._reset_parameters(
@@ -1367,7 +1356,7 @@ class VariationalFastSpeechGW(AbsTTS):
         olens = feats_lengths
 
         # forward propagation
-        before_outs, after_outs, d_outs, p_outs, e_outs, d_mu_outs, d_ln_var_outs, ds_mu, ds_ln_var = self._forward(
+        outs_mu, outs_ln_var, d_outs, p_outs, e_outs, d_mu_outs, d_ln_var_outs, ds_mu, ds_ln_var = self._forward(
             xs,
             ilens,
             ys,
@@ -1388,13 +1377,9 @@ class VariationalFastSpeechGW(AbsTTS):
             ys = ys[:, :max_olen]
 
         # calculate loss
-        if self.postnet is None:
-            after_outs = None
-
-        # calculate loss
         l1_loss, duration_loss, pitch_loss, energy_loss = self.criterion(
-            after_outs=after_outs,
-            before_outs=before_outs,
+            outs_mu=outs_mu,
+            outs_ln_var=outs_ln_var,
             d_outs=d_outs,
             p_outs=p_outs,
             e_outs=e_outs,
@@ -1438,7 +1423,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 stats=stats, 
                 outs=weight, 
                 feats=torch.stack(
-                    [feats, before_outs, after_outs] if after_outs is not None else [feats, after_outs],
+                    [feats, outs_mu, outs_ln_var],
                     dim=1
                 )
             )
@@ -1446,9 +1431,9 @@ class VariationalFastSpeechGW(AbsTTS):
             return dict(
                 loss=loss, 
                 stats=stats, 
-                outs=after_outs if after_outs is not None else before_outs,
+                outs=outs_mu,
                 feats=torch.stack(
-                    [feats, before_outs, after_outs] if after_outs is not None else [feats, before_outs],
+                    [feats, outs_mu, outs_ln_var],
                     dim=1
                 )
             )
@@ -1547,21 +1532,16 @@ class VariationalFastSpeechGW(AbsTTS):
         # forward decoder
         h_masks = self._source_mask(olens)
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
-        before_outs = self.feat_out(zs).view(
+        outs_mu = self.feat_out_mu(zs).view(
+            zs.size(0), -1, self.odim
+        )  # (B, T_feats, odim)
+        outs_ln_var = self.feat_out_ln_var(zs).view(
             zs.size(0), -1, self.odim
         )  # (B, T_feats, odim)
 
-        # postnet -> (B, T_feats//r * r, odim)
-        if self.postnet is None:
-            after_outs = before_outs
-        else:
-            after_outs = before_outs + self.postnet(
-                before_outs.transpose(1, 2)
-            ).transpose(1, 2)
-
         return (
-            before_outs, 
-            after_outs, 
+            outs_mu, 
+            outs_ln_var, 
             map, 
             p_outs, 
             e_outs,
@@ -1625,7 +1605,7 @@ class VariationalFastSpeechGW(AbsTTS):
         if use_teacher_forcing and False:
             # use groundtruth of duration, pitch, and energy
             ds, ps, es = None, p.unsqueeze(0), e.unsqueeze(0)
-            _, outs, d_outs, p_outs, e_outs = self._forward(
+            outs_mu, outs_ln_var, d_outs, p_outs, e_outs = self._forward(
                 xs,
                 ilens,
                 ys,
@@ -1638,7 +1618,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 lids=lids,
             )  # (1, T_feats, odim)
         else:
-            _, outs, d_outs, p_outs, e_outs, _, _, _, _ = self._forward(
+            outs_mu, outs_ln_var, d_outs, p_outs, e_outs, _, _, _, _ = self._forward(
                 xs,
                 ilens,
                 ys,
@@ -1651,11 +1631,11 @@ class VariationalFastSpeechGW(AbsTTS):
             )  # (1, T_feats, odim)
 
         return dict(
-            feat_gen=outs[0],
+            feat_gen=outs_mu[0],
             duration=torch.zeros_like(p_outs[0]),
             pitch=p_outs[0],
             energy=e_outs[0],
-            feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
+            feats=torch.cat([feats.unsqueeze(0), outs_mu, outs_ln_var], dim=0),
             att_w=d_outs[0]
         )
 
