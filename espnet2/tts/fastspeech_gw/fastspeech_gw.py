@@ -1499,29 +1499,30 @@ class VariationalFastSpeechGW(AbsTTS):
         if is_inference:
             ds, ds_mu, ds_ln_var = None, None, None
             
-            d_outs = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            mu, std = self.stft(ds)
-            d_outs = self.sampling(mu, std)
-            d_outs, d_mu_outs, d_ln_var_outs = d_outs['zs'], d_outs['mu'], d_outs['ln_var']
-            d_outs = self.istft(d_outs)
+            ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
+            n = ws.size(-2)
+            mu, ln_var = self.stft(ws)
+            d_outs_dict = self.sampling(mu, ln_var)
+            ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
+            d_outs = self.istft(ws, n)
             
-            hs, d_outs = self.length_regulator(hs, d_outs)  # (B, T_feats, adim)
+            hs, map = self.length_regulator(hs, d_outs, is_inference)  # (B, T_feats, adim)
         else:
-            ds = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
-            n = ds.size(-2)
-            mu, ln_var = self.stft(ds)
-            ds = self.sampling(mu, ln_var)
-            ds, ds_mu, ds_ln_var = ds['zs'], ds['mu'], ds['ln_var']
-            ds = self.istft(ds, n)
+            ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
+            n = ws.size(-2)
+            mu, ln_var = self.stft(ws)
+            d_outs_dict = self.sampling(mu, ln_var)
+            ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
+            d_outs = self.istft(ws, n)
             
-            d_outs = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            n = d_outs.size(-2)
-            mu, ln_var = self.stft(d_outs)
-            d_outs = self.sampling(mu, ln_var)
-            d_outs, d_mu_outs, d_ln_var_outs = d_outs['zs'], d_outs['mu'], d_outs['ln_var']
-            d_outs = self.istft(d_outs, n)
+            ws = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
+            n = ws.size(-2)
+            mu, ln_var = self.stft(ws)
+            ds_dict = self.sampling(mu, ln_var)
+            ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
+            ds = self.istft(ws, n)
             
-            hs, d_outs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
+            hs, map = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
                     
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
@@ -1561,7 +1562,7 @@ class VariationalFastSpeechGW(AbsTTS):
         return (
             before_outs, 
             after_outs, 
-            d_outs, 
+            map, 
             p_outs, 
             e_outs,
             d_mu_outs, 

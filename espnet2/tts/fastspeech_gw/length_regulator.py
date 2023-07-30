@@ -38,7 +38,7 @@ class LengthRegulator(torch.nn.Module):
         self.n_iter = n_iter
         self.sr = sr
 
-    def forward(self, xs, ds, grad_stop=False):
+    def forward(self, xs, ds, is_inference, grad_stop=False):
         """Calculate forward propagation.
 
         Args:

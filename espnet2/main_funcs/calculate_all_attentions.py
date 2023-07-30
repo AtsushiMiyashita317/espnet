@@ -106,8 +106,14 @@ def calculate_all_attentions(
                 att_w = torch.exp(w).detach().cpu()
                 outputs.setdefault(name, []).append(att_w)
             elif isinstance(module, LengthRegulator):
+                _, _, is_inference = input
+                logging.info(f'is_inference: {is_inference}')
                 _, ds = output
                 outputs[name] = ds.detach().cpu()
+            elif isinstance(module, AbsTTS):
+                if type(output) is dict:
+                    if 'feats' in output:
+                        outputs[name] = output['feats'].detach().cpu()
                     
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
