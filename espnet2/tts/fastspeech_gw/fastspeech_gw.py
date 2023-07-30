@@ -1356,7 +1356,7 @@ class VariationalFastSpeechGW(AbsTTS):
         olens = feats_lengths
 
         # forward propagation
-        outs_mu, outs_ln_var, d_outs, p_outs, e_outs, d_mu_outs, d_ln_var_outs, ds_mu, ds_ln_var = self._forward(
+        outs_mu, outs_ln_var, p_outs, ps, e_outs, es, d_outs, d_mu_outs, d_ln_var_outs, ds_mu, ds_ln_var = self._forward(
             xs,
             ilens,
             ys,
@@ -1477,38 +1477,8 @@ class VariationalFastSpeechGW(AbsTTS):
         # forward duration predictor and variance predictors
         text_masks = make_pad_mask(ilens).to(xs.device)
         feat_masks = make_pad_mask(olens).to(xs.device)
-        d_masks = make_pad_mask(olens).to(xs.device)      
+        d_masks = make_pad_mask(ilens).to(xs.device)      
         
-        hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
-        
-        if is_inference:
-            ds, ds_mu, ds_ln_var = None, None, None
-            
-            ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            n = ws.size(-2)
-            mu, ln_var = self.stft(ws)
-            d_outs_dict = self.sampling(mu, ln_var)
-            ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
-            d_outs = self.istft(ws, n)
-            
-            hs, map = self.length_regulator(hs, d_outs, is_inference)  # (B, T_feats, adim)
-        else:
-            ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
-            n = ws.size(-2)
-            mu, ln_var = self.stft(ws)
-            d_outs_dict = self.sampling(mu, ln_var)
-            ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
-            d_outs = self.istft(ws, n)
-            
-            ws = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
-            n = ws.size(-2)
-            mu, ln_var = self.stft(ws)
-            ds_dict = self.sampling(mu, ln_var)
-            ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
-            ds = self.istft(ws, n)
-            
-            hs, map = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
-                    
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
@@ -1517,18 +1487,45 @@ class VariationalFastSpeechGW(AbsTTS):
             e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
-
+            
+        ws = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+        ws = self.duration_predictor(ws, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
+        n = ws.size(-2)
+        mu, ln_var = self.stft(ws)
+        d_outs_dict = self.sampling(mu, ln_var)
+        ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
+        d_outs = self.istft(ws, n)
+                
         if is_inference:
-            # use prediction in inference
+            ds, ds_mu, ds_ln_var = None, None, None
+            ps_averaged = None
+            es_averaged = None
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
             hs = hs + e_embs + p_embs
+            
+            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+            hs, map = self.length_regulator(hs, d_outs, is_inference)  # (B, T_feats, adim)
         else:
-            # use groundtruth in training
-            p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
-            e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
-            hs = hs + e_embs + p_embs            
-
+            ws = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
+            n = ws.size(-2)
+            mu, ln_var = self.stft(ws)
+            ds_dict = self.sampling(mu, ln_var)
+            ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
+            ds = self.istft(ws, n)
+            
+            _, map = self.length_regulator(torch.zeros_like(ds).unsqueeze(-1), ds, is_inference)  # (B, T_feats, adim)      
+            map_inv = map.inverse()
+            ps_averaged = gw.utils.average(map_inv@ps, ilens, olens)
+            es_averaged = gw.utils.average(map_inv@es, ilens, olens)
+            
+            p_embs = self.pitch_embed(ps_averaged.transpose(1, 2)).transpose(1, 2)
+            e_embs = self.energy_embed(es_averaged.transpose(1, 2)).transpose(1, 2)
+            hs = hs + e_embs + p_embs     
+            
+            hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+            hs = self.length_regulator.warp(hs, map)  # (B, T_feats, adim)      
+        
         # forward decoder
         h_masks = self._source_mask(olens)
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
@@ -1542,9 +1539,11 @@ class VariationalFastSpeechGW(AbsTTS):
         return (
             outs_mu, 
             outs_ln_var, 
-            map, 
             p_outs, 
+            ps_averaged,
             e_outs,
+            es_averaged,
+            map, 
             d_mu_outs, 
             d_ln_var_outs,
             ds_mu, 
@@ -1618,7 +1617,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 lids=lids,
             )  # (1, T_feats, odim)
         else:
-            outs_mu, outs_ln_var, d_outs, p_outs, e_outs, _, _, _, _ = self._forward(
+            outs_mu, outs_ln_var, p_outs, _, e_outs, _, d_outs, _, _, _, _ = self._forward(
                 xs,
                 ilens,
                 ys,

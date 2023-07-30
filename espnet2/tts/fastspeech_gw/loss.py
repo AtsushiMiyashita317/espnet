@@ -229,7 +229,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         ds_ln_var = ds_ln_var.masked_select(duration_masks)
         d_mu_outs = d_mu_outs.masked_select(duration_masks)
         d_ln_var_outs = d_ln_var_outs.masked_select(duration_masks)
-        pitch_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
+        pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ys.device)
         p_outs = p_outs.masked_select(pitch_masks)
         e_outs = e_outs.masked_select(pitch_masks)
         ps = ps.masked_select(pitch_masks)
