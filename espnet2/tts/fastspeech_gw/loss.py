@@ -173,7 +173,6 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = GaussianNLLLoss(reduction=reduction)
-        self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
@@ -181,12 +180,8 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         outs_mu: torch.Tensor,
         outs_ln_var: torch.Tensor,
         d_outs: torch.Tensor,
-        p_outs: torch.Tensor,
-        e_outs: torch.Tensor,
         ys: torch.Tensor,
         ds: torch.Tensor,
-        ps: torch.Tensor,
-        es: torch.Tensor,
         ilens: torch.Tensor,
         olens: torch.Tensor,
         d_mu_outs: torch.Tensor, 
@@ -229,16 +224,9 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         ds_ln_var = ds_ln_var.masked_select(duration_masks)
         d_mu_outs = d_mu_outs.masked_select(duration_masks)
         d_ln_var_outs = d_ln_var_outs.masked_select(duration_masks)
-        pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ys.device)
-        p_outs = p_outs.masked_select(pitch_masks)
-        e_outs = e_outs.masked_select(pitch_masks)
-        ps = ps.masked_select(pitch_masks)
-        es = es.masked_select(pitch_masks)
 
         # calculate loss
         l1_loss = self.l1_criterion(ys, outs_mu, outs_ln_var)
         duration_loss = self.duration_criterion(ds_mu, ds_ln_var, d_mu_outs, d_ln_var_outs)
-        pitch_loss = self.mse_criterion(p_outs, ps)
-        energy_loss = self.mse_criterion(e_outs, es)
 
-        return l1_loss, duration_loss, pitch_loss, energy_loss
+        return l1_loss, duration_loss
