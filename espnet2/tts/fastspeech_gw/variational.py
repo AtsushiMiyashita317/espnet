@@ -43,9 +43,9 @@ class Stft(torch.nn.Module):
         mu = torch.cat([mu_r,mu_i],dim=1)                       # (B, N, T)
         std = torch.cat([std_r,std_i],dim=1)                    # (B, N, T)
         
-        mu = mu.transpose(-2,-1).div(4)                   # (B, T, N)
+        mu = mu.transpose(-2,-1)                   # (B, T, N)
         std = std.transpose(-2,-1)                              # (B, T, N)
-        ln_var = std.add(1e-10).log().div(2)
+        ln_var = std.add(1e-10).log().div(2).add(2)
         
         return mu, ln_var
         
@@ -65,7 +65,7 @@ class Istft(torch.nn.Module):
 
         """
         n_fft = xs.size(-1)-1
-        xs = xs.transpose(-2,-1).mul(4)                                                # (B, N, T)
+        xs = xs.div(torch.arange(1,n_fft+2,device=xs.device)).transpose(-2,-1).mul(64)                                                  # (B, N, T)
         xs_r, xs_i = xs.narrow(1,0,n_fft//2+1), xs.narrow(1,n_fft//2+1,n_fft//2)    # (B, F, T), (B, F-1, T)
         xs_i = torch.nn.functional.pad(xs_i,[0,0,1,0])                              # (B, F, T)
         xs = torch.stack([xs_r,xs_i],dim=-1)                                        # (B, F, T, 2)

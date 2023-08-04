@@ -1409,7 +1409,8 @@ class VariationalFastSpeechGW(AbsTTS):
             ds_mu=ds_mu, 
             ds_ln_var=ds_ln_var
         )
-        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        # loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        loss = l1_loss + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
