@@ -123,7 +123,7 @@ class AlignmentModule(torch.nn.Module):
         super(AlignmentModule, self).__init__()
         
         self.embed_text = torch.nn.Sequential(
-            torch.nn.Embedding(tdim, n_chans),
+            torch.nn.Linear(tdim, n_chans),
             PositionalEncoding(n_chans, dropout_rate),
         )
         

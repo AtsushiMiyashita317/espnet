@@ -1173,7 +1173,7 @@ class VariationalFastSpeechGW(AbsTTS):
         # )
         
         self.alignment_module = AlignmentModule(
-            tdim=idim,
+            tdim=adim,
             fdim=odim,
             odim=3,
             n_layers=duration_predictor_layers,
@@ -1493,12 +1493,14 @@ class VariationalFastSpeechGW(AbsTTS):
         
         hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
             
-        ws = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
+        ws = self.alignment_module(hs, ys, feat_masks, feat_masks)  # (B, T_text, 2)
         n = ws.size(-2)
         mu, ln_var = self.stft(ws)
         ds_dict = self.sampling(mu, ln_var)
         ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
         ds = self.istft(ws, n)
+        ds = ds - ds.mean(-1, keepdim=True)
+        ds = ds.cumsum(-1)
         
         hs, map = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
                     
