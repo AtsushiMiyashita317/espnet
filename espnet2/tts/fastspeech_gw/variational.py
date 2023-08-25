@@ -82,7 +82,7 @@ class Sample(torch.nn.Module):
         super().__init__()
     
     def forward(self, mu: torch.Tensor, ln_var:torch.Tensor) -> torch.Tensor:                
-        zs = mu + ln_var.mul(0.5).exp()*torch.randn_like(mu)
+        zs = mu
         return dict(zs=zs, mu=mu, ln_var=ln_var)   
 
 
