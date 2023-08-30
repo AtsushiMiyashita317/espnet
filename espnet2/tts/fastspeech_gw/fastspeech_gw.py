@@ -1163,26 +1163,26 @@ class VariationalFastSpeechGW(AbsTTS):
                 self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
         # define duration predictor
-        # self.duration_predictor = VariancePredictor(
-        #     idim=adim,
-        #     odim=3,
-        #     n_layers=duration_predictor_layers,
-        #     n_chans=duration_predictor_chans,
-        #     kernel_size=duration_predictor_kernel_size,
-        #     dropout_rate=0.0   
-        # )
-        
-        self.alignment_module = AlignmentModule(
-            tdim=adim,
-            fdim=odim,
+        self.duration_predictor = VariancePredictor(
+            idim=adim,
             odim=3,
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             kernel_size=duration_predictor_kernel_size,
-            n_head=duration_predictor_heads,
-            n_feat=duration_predictor_feats,
             dropout_rate=0.0   
         )
+        
+        # self.alignment_module = AlignmentModule(
+        #     tdim=adim,
+        #     fdim=odim,
+        #     odim=3,
+        #     n_layers=duration_predictor_layers,
+        #     n_chans=duration_predictor_chans,
+        #     kernel_size=duration_predictor_kernel_size,
+        #     n_head=duration_predictor_heads,
+        #     n_feat=duration_predictor_feats,
+        #     dropout_rate=0.0   
+        # )
         
         self.stft = Stft(n_fft=lr_n_fft)
         self.istft = Istft()
@@ -1493,7 +1493,8 @@ class VariationalFastSpeechGW(AbsTTS):
         
         hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
             
-        ws = self.alignment_module(hs, ys, feat_masks, feat_masks)  # (B, T_text, 2)
+        # ws = self.alignment_module(hs, ys, feat_masks, feat_masks)  # (B, T_text, 2)
+        ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
         n = ws.size(-2)
         mu, ln_var = self.stft(ws)
         ds_dict = self.sampling(mu, ln_var)
