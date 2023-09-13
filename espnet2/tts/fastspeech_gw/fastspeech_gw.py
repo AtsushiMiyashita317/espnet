@@ -1512,7 +1512,6 @@ class VariationalFastSpeechGW(AbsTTS):
             e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
 
         if is_inference:
-            ds, ds_mu, ds_ln_var = None, None, None
             ps_averaged = None
             es_averaged = None
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
@@ -1627,7 +1626,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 lids=lids,
             )  # (1, T_feats, odim)
         else:
-            _, outs, d_outs, p_outs, e_outs = self._forward(
+            _, outs, d_outs, p_outs, _, e_outs, _ = self._forward(
                 xs,
                 ilens,
                 ys,
