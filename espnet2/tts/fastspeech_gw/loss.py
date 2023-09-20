@@ -7,12 +7,38 @@ from typing import Tuple
 
 import torch
 from typeguard import check_argument_types
+import gw
 
 from espnet.nets.pytorch_backend.fastspeech_gw.duration_predictor import (  # noqa: H301
     DurationPredictorLoss,
 )
-from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
+from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask, make_pad_mask
 from espnet2.tts.fastspeech_gw.variational import KLDivergenceLoss
+from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegulator
+from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator as GW
+
+
+class DurationPredictorgwLoss(torch.nn.Module):
+    def __init__(self, lr_before=True) -> None:
+        super().__init__()
+        self.lr = LengthRegulator()
+        self.gw = GW(sr=1)
+        self.mse = torch.nn.MSELoss(reduction='none')
+        self.lr_before = lr_before
+        
+    def forward(self, d_outs, ds, ilens, olens):
+        xs = torch.arange(ds.size(-1), 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
+        ys = self.lr.forward(xs, ds)
+        if not self.lr_before:
+            xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
+        y_outs = self.gw.warp(xs, d_outs)
+        masks = make_pad_mask(ilens if self.lr_before else olens).to(ds.device)
+        y_outs = y_outs.masked_fill(masks.unsqueeze(-1), 0.0)
+        if self.lr_before:
+            y_outs = gw.utils.interpolate(y_outs, ilens, olens, mode='nearest')
+        loss = self.mse.forward(y_outs, ys).squeeze(-1)
+        masks = make_non_pad_mask(olens).to(ds.device)
+        return loss.masked_select(masks).mean()  
 
 
 class FastSpeechGWLoss(torch.nn.Module):
@@ -174,6 +200,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
+        self.duration_criterion = DurationPredictorgwLoss(lr_before=(lr_mode=='before'))
 
     def forward(
         self,
@@ -227,7 +254,8 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
+        duration_loss = self.duration_criterion(d_outs, ds, ilens, olens)
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 
-        return l1_loss, pitch_loss, energy_loss
+        return l1_loss, duration_loss, pitch_loss, energy_loss

@@ -1351,7 +1351,7 @@ class VariationalFastSpeechGW(AbsTTS):
         """
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
-        # durations = durations[:, : durations_lengths.max()]  # for data-parallel
+        durations = durations[:, : durations_lengths.max()]  # for data-parallel
         pitch = pitch[:, : pitch_lengths.max()]  # for data-parallel
         energy = energy[:, : energy_lengths.max()]  # for data-parallel
 
@@ -1363,7 +1363,7 @@ class VariationalFastSpeechGW(AbsTTS):
             xs[i, l] = self.eos
         ilens = text_lengths + 1
 
-        ys, ds, ps, es = feats, None, pitch, energy
+        ys, ds, ps, es = feats, durations, pitch, energy
         olens = feats_lengths
 
         # forward propagation
@@ -1392,7 +1392,7 @@ class VariationalFastSpeechGW(AbsTTS):
             after_outs = None
 
         # calculate loss
-        l1_loss, pitch_loss, energy_loss = self.criterion(
+        l1_loss, duration_loss, pitch_loss, energy_loss = self.criterion(
             after_outs=after_outs,
             before_outs=before_outs,
             d_outs=d_outs,
@@ -1406,11 +1406,11 @@ class VariationalFastSpeechGW(AbsTTS):
             olens=olens
         )
         # loss = l1_loss + duration_loss + pitch_loss + energy_loss
-        loss = l1_loss + pitch_loss + energy_loss
+        loss = l1_loss.detach() + duration_loss + pitch_loss.detach() + energy_loss.detach()
 
         stats = dict(
             l1_loss=l1_loss.item(),
-            duration_loss=0,
+            duration_loss=duration_loss.item(),
             pitch_loss=pitch_loss.item(),
             energy_loss=energy_loss.item(),
         )

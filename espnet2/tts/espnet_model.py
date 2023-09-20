@@ -101,7 +101,7 @@ class ESPnetTTSModel(AbsESPnetModel):
                 feats, feats_lengths = speech, speech_lengths
 
             # Extract auxiliary features
-            if self.pitch_extract is not None and pitch is None:
+            if self.pitch_extract is not None and True:
                 pitch, pitch_lengths = self.pitch_extract(
                     speech,
                     speech_lengths,
@@ -109,7 +109,7 @@ class ESPnetTTSModel(AbsESPnetModel):
                     durations=durations,
                     durations_lengths=durations_lengths,
                 )
-            if self.energy_extract is not None and energy is None:
+            if self.energy_extract is not None and True:
                 energy, energy_lengths = self.energy_extract(
                     speech,
                     speech_lengths,

@@ -26,7 +26,7 @@ class DurationPredictorgwLoss(torch.nn.Module):
         self.lr_before = lr_before
         
     def forward(self, d_outs, ds, ilens, olens):
-        xs = torch.arange(ds.size(-1)-1, 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
+        xs = torch.arange(ds.size(-1), 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
         ys = self.lr.forward(xs, ds)
         if not self.lr_before:
             xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
