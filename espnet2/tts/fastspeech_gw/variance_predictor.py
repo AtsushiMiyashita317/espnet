@@ -12,7 +12,7 @@ from typeguard import check_argument_types
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
-from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
+from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention, EdenAttention
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 
@@ -189,7 +189,7 @@ class AlignmentModule(torch.nn.Module):
             ]
         self.linear_out = torch.nn.Linear(n_chans, odim)
         
-        self.attn = MultiHeadedAttention(n_head, n_feat, dropout_rate)
+        self.attn = EdenAttention(n_head, n_feat, dropout_rate)
         self.norm_text = LayerNorm(n_feat, dim=-1)
         self.norm_feat = LayerNorm(n_feat, dim=-1)
 
@@ -219,7 +219,7 @@ class AlignmentModule(torch.nn.Module):
         feat_emb = self.norm_feat(self.linear_feat(xs.transpose(1, -1)))  # (B, Tfeat, n_feat)
         
         masks = torch.logical_not(torch.logical_or(feat_masks.unsqueeze(-1), text_masks.unsqueeze(-2)))
-        xs = self.attn(feat_emb, text_emb, text_emb, masks)  # (B, Tfeat, n_feat)
+        xs = self.attn(text_emb, feat_emb, masks)  # (B, Tfeat, n_feat)
         
         xs = xs.transpose(1, -1)  # (B, n_feat, Tfeat)
         for f in self.conv_out:
