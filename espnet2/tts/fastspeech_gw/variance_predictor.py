@@ -192,6 +192,7 @@ class AlignmentModule(torch.nn.Module):
         self.attn = EdenAttention(n_head, n_feat, dropout_rate)
         self.norm_text = LayerNorm(n_feat, dim=-1)
         self.norm_feat = LayerNorm(n_feat, dim=-1)
+        self.norm_out = LayerNorm(n_feat, dim=-1)
 
     def forward(self, texts, feats, text_masks, feat_masks):
         """Calculate forward propagation.
@@ -220,6 +221,8 @@ class AlignmentModule(torch.nn.Module):
         
         masks = torch.logical_not(torch.logical_or(feat_masks.unsqueeze(-1), text_masks.unsqueeze(-2)))
         xs = self.attn(text_emb, feat_emb, masks)  # (B, Tfeat, n_feat)
+        
+        xs = self.norm_out(xs)
         
         xs = xs.transpose(1, -1)  # (B, n_feat, Tfeat)
         for f in self.conv_out:
