@@ -1405,8 +1405,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        # loss = l1_loss + duration_loss + pitch_loss + energy_loss
-        loss = l1_loss.detach() + duration_loss + pitch_loss.detach() + energy_loss.detach()
+        loss = l1_loss + duration_loss + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
