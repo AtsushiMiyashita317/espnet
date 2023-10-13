@@ -105,8 +105,6 @@ class AlignmentModule(torch.nn.Module):
         n_layers=2, 
         n_chans=384, 
         kernel_size=3,
-        n_head=4,
-        n_feat=384,
         dropout_rate=0.1, 
     ):
         """Initilize duration predictor module.
@@ -122,38 +120,9 @@ class AlignmentModule(torch.nn.Module):
         assert check_argument_types()
         super(AlignmentModule, self).__init__()
         
-        self.embed_text = torch.nn.Sequential(
-            torch.nn.Linear(tdim, n_chans),
-            PositionalEncoding(n_chans, dropout_rate),
-        )
-        
-        self.embed_feat = torch.nn.Sequential(
-            torch.nn.Linear(fdim, n_chans),
-            PositionalEncoding(n_chans, dropout_rate),
-        )
-            
-        self.conv_text = torch.nn.ModuleList()
-        for idx in range(n_layers):
-            in_chans = n_chans
-            self.conv_text += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
-        self.linear_text = torch.nn.Linear(n_chans, n_feat)
-        
         self.conv_feat = torch.nn.ModuleList()
         for idx in range(n_layers):
-            in_chans = n_chans
+            in_chans = fdim if idx == 0 else n_chans
             self.conv_feat += [
                 torch.nn.Sequential(
                     torch.nn.Conv1d(
@@ -168,11 +137,11 @@ class AlignmentModule(torch.nn.Module):
                     torch.nn.Dropout(dropout_rate),
                 )
             ]
-        self.linear_feat = torch.nn.Linear(n_chans, n_feat)
+        self.linear_feat = torch.nn.Linear(n_chans, tdim)
         
         self.conv_out = torch.nn.ModuleList()
         for idx in range(n_layers):
-            in_chans = n_feat if idx == 0 else n_chans
+            in_chans = tdim if idx == 0 else n_chans
             self.conv_out += [
                 torch.nn.Sequential(
                     torch.nn.Conv1d(
@@ -188,13 +157,8 @@ class AlignmentModule(torch.nn.Module):
                 )
             ]
         self.linear_out = torch.nn.Linear(n_chans, odim)
-        
-        self.attn = EdenAttention(n_head, n_feat, dropout_rate)
-        self.norm_text = LayerNorm(n_feat, dim=-1)
-        self.norm_feat = LayerNorm(n_feat, dim=-1)
-        self.norm_out = LayerNorm(n_feat, dim=-1)
 
-    def forward(self, texts, feats, text_masks, feat_masks):
+    def forward(self, texts, feats, masks):
         """Calculate forward propagation.
 
         Args:
@@ -207,30 +171,19 @@ class AlignmentModule(torch.nn.Module):
             Tensor: Batch of predicted durations in log domain (B, Tfeat).
 
         """
-        xs = self.embed_text(texts).transpose(1, -1)  # (B, C, Ttext)
-        for f in self.conv_text:
-            xs = f(xs)  # (B, C, Tmax)
-
-        text_emb = self.norm_text(self.linear_text(xs.transpose(1, -1)))  # (B, Ttext, n_feat)
-        
-        xs = self.embed_feat(feats).transpose(1, -1)  # (B, C, Tfeat)
+        xs = feats.transpose(1, -1)  # (B, C, Tfeat)
         for f in self.conv_feat:
             xs = f(xs)  # (B, C, Tfeat)
 
-        feat_emb = self.norm_feat(self.linear_feat(xs.transpose(1, -1)))  # (B, Tfeat, n_feat)
+        xs = texts + self.linear_feat(xs.transpose(1, -1))  # (B, Tfeat, tdim)
         
-        masks = torch.logical_not(torch.logical_or(text_masks.unsqueeze(-1), feat_masks.unsqueeze(-2)))
-        xs = self.attn(text_emb, feat_emb, masks)  # (B, Tfeat, n_feat)
-        
-        xs = self.norm_out(xs)
-        
-        xs = xs.transpose(1, -1)  # (B, n_feat, Tfeat)
+        xs = xs.transpose(1, -1)  # (B, C, Tfeat)
         for f in self.conv_out:
             xs = f(xs)  # (B, C, Tfeat)
 
         xs = self.linear_out(xs.transpose(1, -1))  # (B, Tfeat, odim)
 
-        xs = xs.masked_fill(feat_masks.unsqueeze(-1), 0.0)  # (B, Tfeat, odim)
+        xs = xs.masked_fill(masks.unsqueeze(-1), 0.0)  # (B, Tfeat, odim)
 
         return xs
 
