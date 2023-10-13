@@ -1173,7 +1173,7 @@ class VariationalFastSpeechGW(AbsTTS):
         )
         
         self.alignment_module = AlignmentModule(
-            tdim=idim,
+            tdim=adim,
             fdim=odim,
             odim=3,
             n_layers=duration_predictor_layers,
@@ -1506,6 +1506,9 @@ class VariationalFastSpeechGW(AbsTTS):
             ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
             d_outs = self.istft(ws, n)
             
+            d_outs = d_outs - d_outs.mean(-1, keepdim=True)
+            d_outs = d_outs.cumsum(-1)
+            
             hs, map = self.length_regulator(hs, d_outs, is_inference)  # (B, T_feats, adim)
         else:
             ws = self.duration_predictor(hs, feat_masks.unsqueeze(-1))  # (B, T_text, 2)
@@ -1515,12 +1518,15 @@ class VariationalFastSpeechGW(AbsTTS):
             ws, d_mu_outs, d_ln_var_outs = d_outs_dict['zs'], d_outs_dict['mu'], d_outs_dict['ln_var']
             d_outs = self.istft(ws, n)
             
-            ws = self.alignment_module(xs, ys, text_masks, feat_masks)  # (B, T_text, 2)
+            ws = self.alignment_module(hs, ys, feat_masks, feat_masks)  # (B, T_text, 2)
             n = ws.size(-2)
             mu, ln_var = self.stft(ws)
             ds_dict = self.sampling(mu, ln_var)
             ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
             ds = self.istft(ws, n)
+            
+            ds = ds - ds.mean(-1, keepdim=True)
+            ds = ds.cumsum(-1)
             
             hs, map = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
                     
