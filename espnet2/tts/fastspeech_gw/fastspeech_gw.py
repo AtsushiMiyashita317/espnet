@@ -1175,7 +1175,7 @@ class VariationalFastSpeechGW(AbsTTS):
         self.alignment_module = AlignmentModule(
             tdim=adim,
             fdim=odim,
-            odim=3,
+            odim=16,
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             kernel_size=duration_predictor_kernel_size,
@@ -1403,7 +1403,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        loss = l1_loss + 0*duration_loss + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
@@ -1491,15 +1491,19 @@ class VariationalFastSpeechGW(AbsTTS):
         hs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
             
         ws = self.alignment_module(hs, ys, feat_masks)  # (B, T_text, 2)
-        n = ws.size(-2)
-        mu, ln_var = self.stft(ws)
-        ds_dict = self.sampling(mu, ln_var)
-        ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
-        ds = self.istft(ws, n)
-        ds = ds - ds.mean(-1, keepdim=True)
-        ds = ds.cumsum(-1)
+        # n = ws.size(-2)
+        # mu, ln_var = self.stft(ws)
+        # ds_dict = self.sampling(mu, ln_var)
+        # ws, ds_mu, ds_ln_var = ds_dict['zs'], ds_dict['mu'], ds_dict['ln_var']
+        # ds = self.istft(ws, n)
+        ds = ws
+        ds = ds.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+        ds = torch.nn.functional.pad(ds, [0,0,1,0])[...,:-1,:]
+        ds = ds - ds.sum(-2, keepdim=True)/olens.unsqueeze(-1).unsqueeze(-1)
+        ds = ds.cumsum(-2)
+        ds = ds.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         
-        hs, map = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
+        hs, func = self.length_regulator(hs, ds, is_inference)  # (B, T_feats, adim)
                     
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
@@ -1539,7 +1543,7 @@ class VariationalFastSpeechGW(AbsTTS):
         return (
             before_outs, 
             after_outs, 
-            map, 
+            func, 
             p_outs, 
             e_outs,
         )
@@ -1622,6 +1626,9 @@ class VariationalFastSpeechGW(AbsTTS):
                 is_inference=True,
                 alpha=alpha,
             )  # (1, T_feats, odim)
+            
+        map = gw.cubic_interpolation(torch.eye(d_outs.size(-1), device=d_outs.device).unsqueeze(0), d_outs.detach()).transpose(-1,-2)
+        map = map.detach().cpu()
 
         return dict(
             feat_gen=outs[0],
@@ -1629,7 +1636,7 @@ class VariationalFastSpeechGW(AbsTTS):
             pitch=p_outs[0],
             energy=e_outs[0],
             feats=torch.cat([feats.unsqueeze(0), outs], dim=0),
-            att_w=d_outs[0]
+            att_w=map[0]
         )
 
     def _integrate_with_spk_embed(

@@ -51,15 +51,16 @@ class LengthRegulator(torch.nn.Module):
 
         """
         # ys = gw.stgw.stgw(ds, xs, window_size=self.window_size, n_iter=self.n_iter)
-        map = self.map(ds)
-        ys = self.warp(xs, map.detach() if grad_stop else map)
-        return ys, map
+        ds = ds.div(ds.size(-1))
+        ds = ds.transpose(-1,-2)
+        size = ds.size()[:2]
+        ds = ds.flatten(0,1)
+        f = gw.gw_ode(ds)
+        f = f.unflatten(0, size)
+        f = f.transpose(0,1)
+        func = f[0]
+        for i in range(1, f.size(0)):
+            func = gw.cubic_interpolation(f[i].unsqueeze(1), func).squeeze(1)
+        ys = gw.cubic_interpolation(xs.transpose(-1,-2), func).transpose(-1,-2)
+        return ys, func
     
-    def map(self, ds):
-        if ds.ndim == 3:
-            ds = torch.cat([ds[...,:1] + 0j, ds[...,1::2] + 1j*ds[...,2::2]], dim=-1)
-            ds = gw.GW.spectrogram_to_signal(ds)
-        return gw.GW.map(ds,sr=self.sr,pad=16)
-    
-    def warp(self, xs, map):
-        return map@xs

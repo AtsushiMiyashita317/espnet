@@ -23,20 +23,15 @@ class DurationPredictorgwLoss(torch.nn.Module):
         super().__init__()
         self.lr = LengthRegulator()
         self.gw = GW(sr=1)
-        self.mse = torch.nn.MSELoss(reduction='none')
+        self.l1 = torch.nn.L1Loss(reduction='none')
         self.lr_before = lr_before
         
     def forward(self, d_outs, ds, ilens, olens):
-        xs = torch.arange(ds.size(-1), 0, -1, dtype=torch.float).to(ds.device).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
+        xs = torch.arange(ds.size(-1), device=ds.device, dtype=torch.float).unsqueeze(0).expand(ds.size()).unsqueeze(-1)
         ys = self.lr.forward(xs, ds)
-        if not self.lr_before:
-            xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
-        y_outs = self.gw.warp(xs, d_outs)
-        masks = make_pad_mask(ilens if self.lr_before else olens).to(ds.device)
-        y_outs = y_outs.masked_fill(masks.unsqueeze(-1), 0.0)
-        if self.lr_before:
-            y_outs = gw.utils.interpolate(y_outs, ilens, olens, mode='nearest')
-        loss = self.mse.forward(y_outs, ys).squeeze(-1)
+        xs = gw.utils.interpolate(xs, ilens, olens, mode='nearest')
+        y_outs = gw.cubic_interpolation(xs.transpose(-1,-2), d_outs).transpose(-1,-2)
+        loss = self.l1.forward(y_outs, ys).squeeze(-1)
         masks = make_non_pad_mask(olens).to(ds.device)
         return loss.masked_select(masks).mean()  
 

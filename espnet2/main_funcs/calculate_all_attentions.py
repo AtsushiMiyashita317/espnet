@@ -3,6 +3,7 @@ from typing import Dict, List
 import logging
 
 import torch
+import gw
 
 from espnet2.gan_tts.jets.alignments import AlignmentModule
 from espnet2.train.abs_espnet_model import AbsESPnetModel
@@ -107,9 +108,9 @@ def calculate_all_attentions(
                 outputs.setdefault(name, []).append(att_w)
             elif isinstance(module, LengthRegulator):
                 _, _, is_inference = input
-                logging.info(f'is_inference: {is_inference}')
                 _, ds = output
-                outputs[name] = ds.detach().cpu()
+                map = gw.cubic_interpolation(torch.eye(ds.size(-1), device=ds.device).unsqueeze(0), ds.detach()).transpose(-1,-2)
+                outputs[name] = map.detach().cpu()
             elif isinstance(module, AbsTTS):
                 if type(output) is dict:
                     if 'feats' in output:
