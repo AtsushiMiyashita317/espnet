@@ -192,18 +192,19 @@ class KLDivergenceLoss(torch.nn.Module):
         self.register_buffer('mu', torch.tensor(mu))
         self.register_buffer('log_var', torch.tensor(log_var))
         
-    def forward(self, mu_q, log_var_q, mu_p=None, log_var_p=None, masks=None):
-        if mu_p is None:
+    def forward(self, q:torch.Tensor, p:torch.Tensor=None, masks:torch.Tensor=None):
+        if p is None:
             mu_p = self.mu
-        if log_var_p is None:
             log_var_p = self.log_var
+        else:
+            mu_p, log_var_p = p.chunk(2, -1)
+        mu_q, log_var_q = q.chunk(2, -1)
         kl_loss = 0.5 * (
             log_var_p - log_var_q 
             + torch.exp(log_var_q - log_var_p) 
             + torch.square(mu_q - mu_p)*torch.exp(-log_var_p) 
             - 1
         )
-        # kl_loss = kl_loss.sum(-1)
         if masks is not None:
             kl_loss = kl_loss.masked_select(masks)
         if self.reduction == 'sum':

@@ -88,7 +88,7 @@ class VariancePredictor(torch.nn.Module):
         xs = self.linear(xs.transpose(1, 2))  # (B, Tmax, odim)
 
         if x_masks is not None:
-            xs = xs.masked_fill(x_masks, 0.0)
+            xs = xs.masked_fill(x_masks.unsqueeze(-1), 0.0)
 
         return xs
 
@@ -158,7 +158,7 @@ class AlignmentModule(torch.nn.Module):
             ]
         self.linear_out = torch.nn.Linear(n_chans, odim)
 
-    def forward(self, texts, feats, masks):
+    def forward(self, texts:torch.Tensor, feats:torch.Tensor, masks:torch.Tensor) -> torch.Tensor:
         """Calculate forward propagation.
 
         Args:
@@ -173,15 +173,15 @@ class AlignmentModule(torch.nn.Module):
         """
         xs = feats.transpose(1, -1)  # (B, C, Tfeat)
         for f in self.conv_feat:
-            xs = f(xs)  # (B, C, Tfeat)
+            xs = f.forward(xs)  # (B, C, Tfeat)
 
-        xs = texts + self.linear_feat(xs.transpose(1, -1))  # (B, Tfeat, tdim)
+        xs = texts + self.linear_feat.forward(xs.transpose(1, -1))  # (B, Tfeat, tdim)
         
         xs = xs.transpose(1, -1)  # (B, C, Tfeat)
         for f in self.conv_out:
-            xs = f(xs)  # (B, C, Tfeat)
+            xs = f.forward(xs)  # (B, C, Tfeat)
 
-        xs = self.linear_out(xs.transpose(1, -1))  # (B, Tfeat, odim)
+        xs = self.linear_out.forward(xs.transpose(1, -1))  # (B, Tfeat, odim)
 
         xs = xs.masked_fill(masks.unsqueeze(-1), 0.0)  # (B, Tfeat, odim)
 

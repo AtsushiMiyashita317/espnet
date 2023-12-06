@@ -195,7 +195,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
-        self.duration_criterion = DurationPredictorgwLoss(lr_before=(lr_mode=='before'))
+        self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
         self,
@@ -249,7 +249,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(d_outs, ds, ilens, olens)
+        duration_loss = self.duration_criterion(ds, d_outs)
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 
