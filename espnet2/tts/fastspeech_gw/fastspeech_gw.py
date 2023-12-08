@@ -1421,7 +1421,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        loss = l1_loss + duration_loss*50 + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
@@ -1520,21 +1520,21 @@ class VariationalFastSpeechGW(AbsTTS):
         else:
             hs = self.duration_predictor1.forward(zs, feat_masks) # (B, T_text, adim)
             mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = mu1 + torch.randn_like(mu1)*ln_var1
-            hs = self.duration_predictor2.forward(hs, feat_masks)  # (B, T_text, n_iter)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            d_outs = torch.cat([mu1, mu2, ln_var1, ln_var2], dim=-1)
-            
             hs = self.alignment_module1.forward(zs, ys, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = mu1 + torch.randn_like(mu1)*ln_var1
-            hs = self.alignment_module2.forward(hs, ys, feat_masks)  # (B, T_text, n_iter)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            ds = torch.cat([mu1, mu2, ln_var1, ln_var2], dim=-1)
+            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
             ws = mu2 + torch.randn_like(mu2)*ln_var2
+            
+            hs = self.duration_predictor2.forward(ws, feat_masks)  # (B, T_text, n_iter)
+            mu3, ln_var3 = hs.chunk(2, -1)  # (B, T_text, n_iter)
+            hs = self.alignment_module2.forward(ws, ys, feat_masks)  # (B, T_text, n_iter)
+            mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
+            ws = mu4 + torch.randn_like(mu4)*ln_var4
+            
+            d_outs = torch.cat([mu1, mu3, ln_var1, ln_var3], dim=-1)
+            ds = torch.cat([mu2, mu4, ln_var2, ln_var4], dim=-1)
         
-        ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+        ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         ws = ws - ws.sum(-2, keepdim=True)/olens.unsqueeze(-1).unsqueeze(-1)
         ws = ws.cumsum(-2)
         ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
@@ -1665,7 +1665,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 alpha=alpha,
             )  # (1, T_feats, odim)
         
-        map = gw.cubic_interpolation(torch.eye(d_outs.size(-1), device=d_outs.device).unsqueeze(0), func.detach()).transpose(-1,-2)
+        map = gw.cubic_interpolation(torch.eye(func.size(-1), device=d_outs.device).unsqueeze(0), func.detach()).transpose(-1,-2)
         map = map.detach().cpu()
 
         return dict(

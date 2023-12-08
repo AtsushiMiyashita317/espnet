@@ -43,7 +43,7 @@ class LengthRegulator(torch.nn.Module):
 
         Args:
             xs (Tensor): Batch of sequences of char or phoneme embeddings (B, Tmax, D).
-            ds (LongTensor): Batch of durations of each frame (B, Tmax).
+            ds (LongTensor): Batch of durations of each frame (B, Tmax, n_iter).
             alpha (float, optional): Alpha value to control speed of speech.
 
         Returns:
@@ -51,16 +51,10 @@ class LengthRegulator(torch.nn.Module):
 
         """
         # ys = gw.stgw.stgw(ds, xs, window_size=self.window_size, n_iter=self.n_iter)
-        ds = ds.div(ds.size(-1))
-        ds = ds.transpose(-1,-2)
-        size = ds.size()[:2]
-        ds = ds.flatten(0,1)
-        f = gw.gw_ode(ds)
-        f = f.unflatten(0, size)
-        f = f.transpose(0,1)
-        func = f[0]
-        for i in range(1, f.size(0)):
-            func = gw.cubic_interpolation(f[i].unsqueeze(1), func).squeeze(1)
-        ys = gw.cubic_interpolation(xs.transpose(-1,-2), func).transpose(-1,-2)
-        return ys, func
+        ds = ds.div(ds.size(-1)*4)
+        f = gw.gw_ode(ds[:,:,0])
+        for i in range(1, ds.size(-1)):
+            f = gw.gw_ode(ds[:,:,i], f=f)
+        ys = gw.cubic_interpolation(xs.transpose(-1,-2), f).transpose(-1,-2)
+        return ys, f
     
