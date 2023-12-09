@@ -25,7 +25,7 @@ from espnet.nets.pytorch_backend.rnn.attentions import (
     NoAtt,
 )
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
-from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
+from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator, LambdaGW
 
 
 @torch.no_grad()
@@ -106,8 +106,7 @@ def calculate_all_attentions(
                 w = output
                 att_w = torch.exp(w).detach().cpu()
                 outputs.setdefault(name, []).append(att_w)
-            elif isinstance(module, LengthRegulator):
-                _, _, is_inference = input
+            elif isinstance(module, (LengthRegulator, LambdaGW)):
                 _, ds = output
                 map = gw.cubic_interpolation(torch.eye(ds.size(-1), device=ds.device).unsqueeze(0), ds.detach()).transpose(-1,-2)
                 outputs[name] = map.detach().cpu()
