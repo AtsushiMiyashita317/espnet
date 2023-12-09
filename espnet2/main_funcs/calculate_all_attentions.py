@@ -111,10 +111,6 @@ def calculate_all_attentions(
                 _, ds = output
                 map = gw.cubic_interpolation(torch.eye(ds.size(-1), device=ds.device).unsqueeze(0), ds.detach()).transpose(-1,-2)
                 outputs[name] = map.detach().cpu()
-            elif isinstance(module, AbsTTS):
-                if type(output) is dict:
-                    if 'feats' in output:
-                        outputs[name] = output['feats'].detach().cpu()
                     
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
