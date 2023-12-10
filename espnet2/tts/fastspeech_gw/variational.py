@@ -197,8 +197,8 @@ class KLDivergenceLoss(torch.nn.Module):
             mu_p = self.mu
             log_var_p = self.log_var
         else:
-            mu_p, log_var_p = p.chunk(2, -1)
-        mu_q, log_var_q = q.chunk(2, -1)
+            mu_p, log_var_p = p.select(-1, 0), p.select(-1, 1)
+        mu_q, log_var_q = q.select(-1, 0), q.select(-1, 1)
         kl_loss = 0.5 * (
             log_var_p - log_var_q 
             + torch.exp(log_var_q - log_var_p) 
@@ -211,4 +211,4 @@ class KLDivergenceLoss(torch.nn.Module):
             kl_loss = kl_loss.sum()
         elif self.reduction == 'mean':
             kl_loss = kl_loss.mean()
-        return kl_loss
+        return kl_loss*50

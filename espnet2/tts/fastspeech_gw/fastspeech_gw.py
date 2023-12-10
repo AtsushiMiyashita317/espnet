@@ -17,7 +17,7 @@ from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.fastspeech_gw.loss import FastSpeechGWLoss, VariationalFastSpeechGWLoss
 from espnet2.tts.fastspeech_gw.variational import Stft, Istft, Sample
 from espnet2.tts.fastspeech_gw.variance_predictor import VariancePredictor, AlignmentModule
-from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator, LambdaGW
+from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator, LambdaGW, VariationalLambdaGW
 from espnet2.tts.gst.style_encoder import StyleEncoder
 from espnet.nets.pytorch_backend.conformer.encoder import Encoder as ConformerEncoder
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask, make_pad_mask
@@ -1200,8 +1200,9 @@ class VariationalFastSpeechGW(AbsTTS):
         )
 
         # define length regulator
-        self.length_regulator = LambdaGW(
+        self.length_regulator = VariationalLambdaGW(
             idim=adim,
+            odim=odim,
             ldim=64,
             n_layers=4,
             n_composite=16,
@@ -1384,7 +1385,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        loss = l1_loss + duration_loss*0 + pitch_loss + energy_loss
+        loss = l1_loss + duration_loss + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
@@ -1467,9 +1468,10 @@ class VariationalFastSpeechGW(AbsTTS):
         # forward duration predictor and variance predictors
         text_masks = make_pad_mask(ilens).to(xs.device)
         feat_masks = make_pad_mask(olens).to(xs.device)
-        d_masks = make_pad_mask(olens).to(xs.device)      
+        d_masks = make_pad_mask(olens).to(xs.device)
         
-        hs, func = self.length_regulator(hs, ilens, olens)  # (B, T_feats, adim)
+        hs, func, p, q = self.length_regulator(
+            hs, ys, ilens, olens, is_inference, ds)  # (B, T_feats, adim)
                     
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks)
@@ -1510,8 +1512,8 @@ class VariationalFastSpeechGW(AbsTTS):
             before_outs, 
             after_outs, 
             func,
-            ds, 
-            None, 
+            q, 
+            p, 
             p_outs, 
             e_outs,
         )
