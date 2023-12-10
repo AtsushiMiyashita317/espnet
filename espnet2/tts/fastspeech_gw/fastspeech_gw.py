@@ -893,6 +893,7 @@ class VariationalFastSpeechGW(AbsTTS):
         duration_predictor_chans: int = 384,
         duration_predictor_kernel_size: int = 3,
         duration_predictor_iter: int = 16,
+        duration_predictor_ldim: int = 64,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -1203,9 +1204,9 @@ class VariationalFastSpeechGW(AbsTTS):
         self.length_regulator = VariationalLambdaGW(
             idim=adim,
             odim=odim,
-            ldim=64,
-            n_layers=4,
-            n_composite=16,
+            ldim=duration_predictor_ldim,
+            n_layers=duration_predictor_layers,
+            n_composite=duration_predictor_iter,
             kernel_size=duration_predictor_kernel_size,
             n_chans=duration_predictor_chans
         )
