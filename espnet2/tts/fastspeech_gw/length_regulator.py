@@ -165,9 +165,9 @@ class LambdaGW(torch.nn.Module):
                 torch.nn.ReLU(),
                 LayerNorm(n_chans, dim=-1),
             ]
-        linear += [torch.nn.Linear(n_chans, (ldim*n_layers+1)*n_composite)]
+        linear += [torch.nn.Linear(n_chans, ldim*n_layers*n_composite)]
         self.linear_lf = torch.nn.Sequential(*linear)
-        self.linear_kf = torch.nn.Linear(n_chans, ldim+1)
+        self.linear_kf = torch.nn.Linear(n_chans, ldim)
         self.linear_vf = torch.nn.Linear(n_chans, idim)
         
         # self.linear_kw = torch.nn.Linear(idim, ldim)
@@ -175,9 +175,19 @@ class LambdaGW(torch.nn.Module):
         # self.linear_lw = torch.nn.Linear(ldim, 1)
         # self.linear_ly = torch.nn.Linear(ldim, idim)
         
-        self.act = torch.nn.ReLU()
-        self.norm_w = torch.nn.LayerNorm([ldim,ldim])
-        self.norm_b = torch.nn.LayerNorm([1,ldim])
+        self.norm_s = LayerNorm(ldim)
+        self.emb_s = torch.nn.Linear(idim, ldim)
+        self.linear_s = torch.nn.ModuleList()
+        for idx in range(n_layers):
+            odim = 1 if idx == n_layers-1 else ldim
+            self.linear_s += [
+                torch.nn.Sequential(
+                    torch.nn.Linear(ldim, n_chans),
+                    torch.nn.ReLU(),
+                    LayerNorm(n_chans),
+                    torch.nn.Linear(n_chans, odim),
+                )
+            ]
     
     def positional_encoding(self, t:torch.Tensor, d:int) -> torch.Tensor:
         """Positional Encoding
@@ -195,7 +205,7 @@ class LambdaGW(torch.nn.Module):
         )
         pe1 = torch.sin(t.unsqueeze(-1)*div_term*4)
         pe2 = torch.cos(t.unsqueeze(-1)*div_term*4)
-        pe = torch.cat([pe1,pe2], dim=-1)
+        pe = torch.cat([pe1,pe2], dim=-1)/math.sqrt(d/2)
         return pe
         
     def forward_one_lambda(self, l:torch.Tensor, x:torch.Tensor) -> torch.Tensor:
@@ -216,31 +226,23 @@ class LambdaGW(torch.nn.Module):
         """Forward GW signal
 
         Args:
-            l (torch.Tensor, (b, ldim+1, ldim*n_layers+1)): Lamda
+            l (torch.Tensor, (b, ldim, ldim, n_layers)): Lamda
             t (torch.Tensor, (b, time2)): Time index
             
         Returns:
             torch.Tensor, (b, time2): GW signal
         """
-        # (batch, ldim+1, 1)
-        l0 = l[:,:,:1]
-        # (batch, ldim+1, ldim, n_layers)
-        l = l[:,:,1:].unflatten(-1, (self.ldim, self.n_layers))
-        
+        # (b, time2, idim)
+        s = self.positional_encoding(t, self.idim)
         # (b, time2, ldim)
-        s = self.positional_encoding(t, self.ldim)
+        s = self.emb_s.forward(s)
         
-        for i in range(self.n_layers):
+        for i, m in enumerate(self.linear_s):
             # (b, time2, ldim)
-            b = self.norm_b.forward(l[:,:1,:,i])/math.sqrt(self.ldim*2)
-            w = self.norm_w.forward(l[:,1:,:,i])/math.sqrt(self.ldim*2)
-            s = b + s@w
-            s = self.act.forward(s)
-            # s = self.norm.forward(s)
-        # (b, time2, 1)
-        b = l0[:,:1,:]/math.sqrt(self.ldim*2)
-        w = l0[:,1:,:]/math.sqrt(self.ldim*2)
-        s = s = b + s@w
+            res = s
+            s = self.norm_s.forward(s)
+            s = res + s@l[:,:,:,i]
+            s = m.forward(s)
         
         # (b, time2)
         s = s.squeeze(-1).div(self.n_composite)
@@ -250,7 +252,7 @@ class LambdaGW(torch.nn.Module):
         """Forward GW composite
 
         Args:
-            l (torch.Tensor, (b, ldim+1, ldim*n_layers+1)): Lamda
+            l (torch.Tensor, (b, ldim+1, ldim, n_layers)): Lamda
             f (torch.Tensor, (b, time2)): Initial warping
 
         Returns:
@@ -281,7 +283,7 @@ class LambdaGW(torch.nn.Module):
         x = x + pe
         x = self.conv.forward(x.transpose(-1,-2)).transpose(-1,-2)
         
-        # (batch, time1, ldim+1)
+        # (batch, time1, ldim)
         k = self.linear_kf.forward(x)
         # (batch, time1, idim)
         v = self.linear_vf.forward(x)
@@ -294,18 +296,18 @@ class LambdaGW(torch.nn.Module):
         
         scores = torch.softmax(k, dim=-2)
         
-        # (batch, ldim+1, idim)
+        # (batch, ldim, idim)
         l = scores.transpose(-1,-2)@v
-        # (batch, ldim+1, (ldim*n_layers+1)*n_composite)
+        # (batch, ldim, ldim*n_layers*n_composite)
         l = self.linear_lf.forward(l)
-        # (batch, ldim+1, ldim*n_layers+1, n_composite)
-        l = l.unflatten(-1, (self.ldim*self.n_layers+1, self.n_composite))
+        # (batch, ldim, ldim, n_layers, n_composite)
+        l = l.unflatten(-1, (self.ldim, self.n_layers, self.n_composite))
         
         max_len = olens.max().item()
         # (b,time2)
         f = torch.arange(max_len, dtype=torch.float32, device=x.device)*(ilens/olens).unsqueeze(-1)
         for i in range(self.n_composite):
-            f = self.forward_one_composite(l[:,:,:,i], f)
+            f = self.forward_one_composite(l[:,:,:,:,i], f)
             
         return f
         
