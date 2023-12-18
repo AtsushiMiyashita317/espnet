@@ -1162,43 +1162,59 @@ class VariationalFastSpeechGW(AbsTTS):
                 self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
         # define duration predictor
-        self.duration_predictor1 = VariancePredictor(
-            idim=adim,
-            odim=adim*2,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0   
-        )
-        
-        self.duration_predictor2 = VariancePredictor(
-            idim=adim,
-            odim=duration_predictor_iter,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0   
-        )
-        
-        self.alignment_module1 = AlignmentModule(
-            tdim=adim,
-            fdim=odim,
-            odim=adim*2,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0   
-        )
-        
-        self.alignment_module2 = AlignmentModule(
-            tdim=adim,
-            fdim=odim,
-            odim=duration_predictor_iter,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0   
-        )
+        self.duration_encoder = torch.nn.ModuleList()
+        for _ in range(duration_predictor_layers):
+            self.duration_encoder.append(
+                VariancePredictor(
+                    idim=adim,
+                    odim=adim*2,
+                    n_layers=1,
+                    n_chans=duration_predictor_chans,
+                    kernel_size=duration_predictor_kernel_size,
+                    dropout_rate=0.0   
+                )
+            )
+            
+        self.duration_decoder = torch.nn.ModuleList()
+        for _ in range(duration_predictor_layers):
+            self.duration_decoder.append(
+                VariancePredictor(
+                    idim=adim,
+                    odim=duration_predictor_iter,
+                    n_layers=1,
+                    n_chans=duration_predictor_chans,
+                    kernel_size=duration_predictor_kernel_size,
+                    dropout_rate=0.0   
+                )
+            )
+            
+        self.alignment_encoder = torch.nn.ModuleList()
+        for _ in range(duration_predictor_layers):
+            self.alignment_encoder.append(
+                AlignmentModule(
+                    tdim=adim,
+                    fdim=odim,
+                    odim=adim*2,
+                    n_layers=1,
+                    n_chans=duration_predictor_chans,
+                    kernel_size=duration_predictor_kernel_size,
+                    dropout_rate=0.0   
+                )
+            )
+            
+        self.alignment_decoder = torch.nn.ModuleList()
+        for _ in range(duration_predictor_layers):
+            self.alignment_decoder.append(
+                AlignmentModule(
+                    tdim=adim,
+                    fdim=odim,
+                    odim=duration_predictor_iter,
+                    n_layers=1,
+                    n_chans=duration_predictor_chans,
+                    kernel_size=duration_predictor_kernel_size,
+                    dropout_rate=0.0   
+                )
+            )
         
         self.stft = Stft(n_fft=lr_n_fft)
         self.istft = Istft()
@@ -1421,7 +1437,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        loss = l1_loss + duration_loss*50 + pitch_loss + energy_loss
+        loss = l1_loss + duration_loss + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
@@ -1507,39 +1523,68 @@ class VariationalFastSpeechGW(AbsTTS):
         d_masks = make_pad_mask(olens).to(xs.device)      
         
         zs = gw.utils.interpolate(hs, ilens, olens, mode='nearest')
+        hs = zs
+        d_outs_mu = hs.new_zeros((hs.size(0), hs.size(1), 0))
+        d_outs_ln_var = hs.new_zeros((hs.size(0), hs.size(1), 0))
+        ds_mu = hs.new_zeros((hs.size(0), hs.size(1), 0))
+        ds_ln_var = hs.new_zeros((hs.size(0), hs.size(1), 0))
         
         if is_inference:
-            hs = self.duration_predictor1.forward(zs, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = mu1 + torch.randn_like(mu1)*ln_var1
-            hs = self.duration_predictor2.forward(hs, feat_masks)  # (B, T_text, n_iter)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            d_outs = torch.cat([mu1, mu2, ln_var1, ln_var2], dim=-1)
+            for enc, dec in zip(self.duration_encoder, self.duration_decoder):
+                hs = enc.forward(hs, feat_masks) # (B, T_text, adim)
+                mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
+                hs = mu1 + torch.randn_like(mu1)*ln_var1.exp()
+                hs = dec.forward(hs, feat_masks)  # (B, T_text, n_iter)
+                mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
+                ws = mu2 + torch.randn_like(mu2)*ln_var2.exp()
+                
+                d_outs_mu = torch.cat([d_outs_mu, mu1, mu2], dim=-1)
+                d_outs_ln_var = torch.cat([d_outs_ln_var, ln_var1, ln_var2], dim=-1)
+                
+                ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+                ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+                ws = ws - ws.sum(-2, keepdim=True)/olens.unsqueeze(-1).unsqueeze(-1)
+                ws = ws.cumsum(-2)
+                ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+                
+                hs, func = self.length_regulator(zs, ws, is_inference)  # (B, T_feats, adim)
+                
+            d_outs = torch.cat([d_outs_mu, d_outs_ln_var], dim=-1)
             ds = None
-            ws = mu2 + torch.randn_like(mu2)*ln_var2
         else:
-            hs = self.duration_predictor1.forward(zs, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = self.alignment_module1.forward(zs, ys, feat_masks) # (B, T_text, adim)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-            ws = mu2 + torch.randn_like(mu2)*ln_var2
+            for denc, ddec, aenc, adec in zip(
+                self.duration_encoder, 
+                self.duration_decoder,
+                self.alignment_encoder,
+                self.alignment_decoder,
+            ):
+                vs = denc.forward(hs, feat_masks) # (B, T_text, adim)
+                mu1, ln_var1 = vs.chunk(2, -1)  # (B, T_text, adim)
+                hs = aenc.forward(hs, ys, feat_masks) # (B, T_text, adim)
+                mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
+                hs = mu2 + torch.randn_like(mu2)*ln_var1.exp()
+                vs = ddec.forward(hs, feat_masks)  # (B, T_text, n_iter)
+                mu3, ln_var3 = vs.chunk(2, -1)  # (B, T_text, n_iter)
+                hs = adec.forward(hs, ys, feat_masks)  # (B, T_text, n_iter)
+                mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
+                ws = mu4 + torch.randn_like(mu4)*ln_var4.exp()
+                
+                d_outs_mu = torch.cat([d_outs_mu, mu1, mu3], dim=-1)
+                ds_mu = torch.cat([ds_mu, mu2, mu4], dim=-1)
+                d_outs_ln_var = torch.cat([d_outs_ln_var, ln_var1, ln_var3], dim=-1)
+                ds_ln_var = torch.cat([ds_ln_var, ln_var2, ln_var4], dim=-1)
+                
+                ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+                ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+                ws = ws - ws.sum(-2, keepdim=True)/olens.unsqueeze(-1).unsqueeze(-1)
+                ws = ws.cumsum(-2)
+                ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+                
+                hs, func = self.length_regulator(zs, ws, is_inference)  # (B, T_feats, adim)
             
-            hs = self.duration_predictor2.forward(ws, feat_masks)  # (B, T_text, n_iter)
-            mu3, ln_var3 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            hs = self.alignment_module2.forward(ws, ys, feat_masks)  # (B, T_text, n_iter)
-            mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            ws = mu4 + torch.randn_like(mu4)*ln_var4
-            
-            d_outs = torch.cat([mu1, mu3, ln_var1, ln_var3], dim=-1)
-            ds = torch.cat([mu2, mu4, ln_var2, ln_var4], dim=-1)
+            d_outs = torch.cat([d_outs_mu, d_outs_ln_var], dim=-1)
+            ds = torch.cat([ds_mu, ds_ln_var], dim=-1)
         
-        ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
-        ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
-        ws = ws - ws.sum(-2, keepdim=True)/olens.unsqueeze(-1).unsqueeze(-1)
-        ws = ws.cumsum(-2)
-        ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
-        
-        hs, func = self.length_regulator(zs, ws, is_inference)  # (B, T_feats, adim)
                     
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks)
@@ -1736,6 +1781,7 @@ class VariationalFastSpeechGW(AbsTTS):
             self.encoder.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
         if self.decoder_type == "transformer" and self.use_scaled_pos_enc:
             self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
+
 
 class VNART(AbsTTS):
     def __init__(
