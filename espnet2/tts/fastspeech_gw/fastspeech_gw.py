@@ -1168,7 +1168,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 VariancePredictor(
                     idim=adim,
                     odim=adim*2,
-                    n_layers=3,
+                    n_layers=4,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
                     dropout_rate=0.0   
@@ -1181,7 +1181,7 @@ class VariationalFastSpeechGW(AbsTTS):
                 VariancePredictor(
                     idim=adim,
                     odim=duration_predictor_iter,
-                    n_layers=3,
+                    n_layers=4,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
                     dropout_rate=0.0   
@@ -1195,7 +1195,7 @@ class VariationalFastSpeechGW(AbsTTS):
                     tdim=adim,
                     fdim=odim,
                     odim=adim*2,
-                    n_layers=3,
+                    n_layers=4,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
                     dropout_rate=0.0   
@@ -1209,7 +1209,7 @@ class VariationalFastSpeechGW(AbsTTS):
                     tdim=adim,
                     fdim=odim,
                     odim=duration_predictor_iter,
-                    n_layers=3,
+                    n_layers=4,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
                     dropout_rate=0.0   
@@ -1539,10 +1539,10 @@ class VariationalFastSpeechGW(AbsTTS):
             ):
                 hs = enc.forward(hs, feat_masks) # (B, T_text, adim)
                 mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-                hs = mu1 + torch.randn_like(mu1)*ln_var1.exp()
+                hs = mu1 + torch.randn_like(mu1)*ln_var1.mul(0.5).exp()
                 hs = dec.forward(hs, feat_masks)  # (B, T_text, n_iter)
                 mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-                ws = mu2 + torch.randn_like(mu2)*ln_var2.exp()
+                ws = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
                 
                 dp_mu = torch.cat([dp_mu, mu1, mu2], dim=-1)
                 dp_ln_var = torch.cat([dp_ln_var, ln_var1, ln_var2], dim=-1)
@@ -1567,10 +1567,10 @@ class VariationalFastSpeechGW(AbsTTS):
             ):
                 vs = denc.forward(hs, feat_masks) # (B, T_text, adim)
                 mu1, ln_var1 = vs.chunk(2, -1)  # (B, T_text, adim)
-                vs = mu1 + torch.randn_like(mu1)*ln_var1.exp()
+                vs = mu1 + torch.randn_like(mu1)*ln_var1.mul(0.5).exp()
                 vs = ddec.forward(vs, feat_masks)  # (B, T_text, n_iter)
                 mu2, ln_var2 = vs.chunk(2, -1)  # (B, T_text, n_iter)
-                vs = mu2 + torch.randn_like(mu2)*ln_var2.exp()
+                vs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
                 
                 vs = torch.nn.functional.pad(vs, [0,0,1,0])[...,:-1,:]
                 vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
@@ -1582,13 +1582,13 @@ class VariationalFastSpeechGW(AbsTTS):
                 mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
                 hs = aenc.forward(hs, ys, feat_masks) # (B, T_text, adim)
                 mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-                hs = mu2 + torch.randn_like(mu2)*ln_var2.exp()
+                hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
                 
                 _ = ddec.forward(hs, feat_masks)  # (B, T_text, n_iter)
                 mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
                 hs = adec.forward(hs, ys, feat_masks)  # (B, T_text, n_iter)
                 mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-                ws = mu4 + torch.randn_like(mu4)*ln_var4.exp()
+                ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
                 
                 dp_mu = torch.cat([dp_mu, mu1, mu3], dim=-1)
                 dq_mu = torch.cat([dq_mu, mu2, mu4], dim=-1)
