@@ -26,7 +26,7 @@ from espnet.nets.pytorch_backend.rnn.attentions import (
 )
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
-
+from espnet.nets.pytorch_backend.nets_utils import pad_list
 
 @torch.no_grad()
 def calculate_all_attentions(
@@ -106,15 +106,23 @@ def calculate_all_attentions(
                 w = output
                 att_w = torch.exp(w).detach().cpu()
                 outputs.setdefault(name, []).append(att_w)
-            elif isinstance(module, LengthRegulator):
-                _, _, is_inference = input
-                _, ds = output
-                map = gw.cubic_interpolation(torch.eye(ds.size(-1), device=ds.device).unsqueeze(0), ds.detach()).transpose(-1,-2)
-                outputs[name] = map.detach().cpu()
-            elif isinstance(module, AbsTTS):
-                if type(output) is dict:
-                    if 'feats' in output:
-                        outputs[name] = output['feats'].detach().cpu()
+            elif isinstance(module, (LengthRegulator)):
+                xs, _, ps, ds, ilens, olens = input
+                _, fq = output
+                _, fp = module.forward(xs.detach(), ps)
+                
+                fq = fq*torch.unsqueeze(ilens/olens, -1)
+                fp = fp*torch.unsqueeze(ilens/olens, -1)
+                
+                i = torch.arange(ds.size(-1), device=ds.device)
+                repeat = [torch.repeat_interleave(i, d, dim=0) for d in ds]
+                f = pad_list(repeat, 0.0)
+                
+                m = torch.eye(ds.size(-1), device=fp.device).unsqueeze(0)
+                mp = gw.cubic_interpolation(m, fp.detach()).transpose(-1,-2).detach().cpu()
+                mq = gw.cubic_interpolation(m, fq.detach()).transpose(-1,-2).detach().cpu()
+                mfa = gw.cubic_interpolation(m, f.to(device=m.device)).transpose(-1,-2).detach().cpu()
+                outputs[name] = [mp, mq, mfa]
                     
         handle = modu.register_forward_hook(hook)
         handles[name] = handle

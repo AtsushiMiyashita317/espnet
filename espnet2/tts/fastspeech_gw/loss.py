@@ -253,4 +253,4 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 
-        return l1_loss, duration_loss*50, pitch_loss, energy_loss
+        return l1_loss, duration_loss*5, pitch_loss, energy_loss

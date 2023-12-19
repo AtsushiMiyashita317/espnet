@@ -84,7 +84,7 @@ class LengthRegulator(torch.nn.Module):
 
     """
 
-    def __init__(self, window_size=16, n_iter=256, sr=4):
+    def __init__(self):
         """Initilize length regulator module.
 
         Args:
@@ -92,11 +92,8 @@ class LengthRegulator(torch.nn.Module):
 
         """
         super().__init__()
-        self.window_size = window_size
-        self.n_iter = n_iter
-        self.sr = sr
-
-    def forward(self, xs, ds, is_inference, grad_stop=False):
+        
+    def forward(self, xs, ds, *args):
         """Calculate forward propagation.
 
         Args:
