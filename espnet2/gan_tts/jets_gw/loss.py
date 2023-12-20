@@ -11,9 +11,7 @@ import torch.nn.functional as F
 from scipy.stats import betabinom
 from typeguard import check_argument_types
 
-from espnet.nets.pytorch_backend.fastspeech.duration_predictor import (  # noqa: H301
-    DurationPredictorLoss,
-)
+from espnet2.tts.fastspeech_gw.variational import KLDivergenceLoss
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 
 
@@ -31,14 +29,15 @@ class VarianceLoss(torch.nn.Module):
         assert check_argument_types()
         super().__init__()
 
-        assert (use_masking != use_weighted_masking) or not use_masking
+        assert use_masking
+        assert not use_weighted_masking
         self.use_masking = use_masking
         self.use_weighted_masking = use_weighted_masking
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
-        self.duration_criterion = DurationPredictorLoss(reduction=reduction)
+        self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
         self,
@@ -48,7 +47,7 @@ class VarianceLoss(torch.nn.Module):
         ps: torch.Tensor,
         e_outs: torch.Tensor,
         es: torch.Tensor,
-        ilens: torch.Tensor,
+        olens: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
 
@@ -68,39 +67,16 @@ class VarianceLoss(torch.nn.Module):
 
         """
         # apply mask to remove padded part
-        if self.use_masking:
-            duration_masks = make_non_pad_mask(ilens).to(ds.device)
-            d_outs = d_outs.masked_select(duration_masks)
-            ds = ds.masked_select(duration_masks)
-            pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ds.device)
-            p_outs = p_outs.masked_select(pitch_masks)
-            e_outs = e_outs.masked_select(pitch_masks)
-            ps = ps.masked_select(pitch_masks)
-            es = es.masked_select(pitch_masks)
+        masks = make_non_pad_mask(olens).unsqueeze(-1).to(ds.device)
+        p_outs = p_outs.masked_select(masks)
+        e_outs = e_outs.masked_select(masks)
+        ps = ps.masked_select(masks)
+        es = es.masked_select(masks)
 
         # calculate loss
-        duration_loss = self.duration_criterion(d_outs, ds)
+        duration_loss = self.duration_criterion(ds, d_outs, masks)*10
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
-
-        # make weighted mask and apply it
-        if self.use_weighted_masking:
-            duration_masks = make_non_pad_mask(ilens).to(ds.device)
-            duration_weights = (
-                duration_masks.float() / duration_masks.sum(dim=1, keepdim=True).float()
-            )
-            duration_weights /= ds.size(0)
-
-            # apply weight
-            duration_loss = (
-                duration_loss.mul(duration_weights).masked_select(duration_masks).sum()
-            )
-            pitch_masks = duration_masks.unsqueeze(-1)
-            pitch_weights = duration_weights.unsqueeze(-1)
-            pitch_loss = pitch_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            energy_loss = (
-                energy_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            )
 
         return duration_loss, pitch_loss, energy_loss
 
