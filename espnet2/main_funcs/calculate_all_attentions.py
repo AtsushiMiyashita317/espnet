@@ -6,6 +6,7 @@ import torch
 import gw
 
 from espnet2.gan_tts.jets.alignments import AlignmentModule
+from espnet2.gan_tts.hifigan.loss import MelSpectrogramLoss
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 from espnet2.tts.abs_tts import AbsTTS
 from espnet.nets.pytorch_backend.rnn.attentions import (
@@ -216,7 +217,11 @@ def calculate_feats(
                 if type(output) is dict:
                     if 'feats' in output:
                         outputs[name] = output['feats']
-                
+            elif isinstance(module, MelSpectrogramLoss):
+                y_hat, y, *_ = input
+                mel_hat, _ = module.wav_to_mel(y_hat.squeeze(1))
+                mel, _ = module.wav_to_mel(y.squeeze(1))
+                outputs[name] = torch.stack([mel, mel_hat], dim=1)
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
 
@@ -261,3 +266,106 @@ def calculate_feats(
         handle.remove()
 
     return return_list
+
+@torch.no_grad()
+def calculate_alignments(
+    model: AbsESPnetModel, batch: Dict[str, torch.Tensor]
+) -> Dict[str, List[torch.Tensor]]:
+    """Derive the outputs from the all attention layers
+
+    Args:
+        model:
+        batch: same as forward
+    Returns:
+        return_dict: A dict of a list of tensor.
+        key_names x batch x (D1, D2, ...)
+
+    """
+    bs = len(next(iter(batch.values())))
+    assert all(len(v) == bs for v in batch.values()), {
+        k: v.shape for k, v in batch.items()
+    }
+
+    # 1. Register forward_hook fn to save the output from specific layers
+    outputs = {}
+    handles = {}
+    for name, modu in model.named_modules():
+        def hook(module, input, output, name=name):
+            if isinstance(module, (LengthRegulator)):
+                xs, _, ps, ds, ilens, olens = input
+                _, fq = output
+                _, fp = module.forward(xs.detach(), ps)
+                
+                i = torch.arange(ds.size(-1), device=ds.device)
+                repeat = [torch.repeat_interleave(i, d, dim=0) for d in ds]
+                f = pad_list(repeat, 0.0)*torch.unsqueeze(olens/ilens, -1)
+                
+                m = torch.eye(xs.size(-2), device=fp.device).unsqueeze(0)
+                mp = gw.cubic_interpolation(m, fp.detach()).transpose(-1,-2).detach().cpu()
+                mq = gw.cubic_interpolation(m, fq.detach()).transpose(-1,-2).detach().cpu()
+                mfa = gw.cubic_interpolation(m, f.to(device=m.device)).transpose(-1,-2).detach().cpu()
+                outputs[name] = [mp, mq, mfa]
+                    
+        handle = modu.register_forward_hook(hook)
+        handles[name] = handle
+
+    # 2. Just forward one by one sample.
+    # Batch-mode can't be used to keep requirements small for each models.
+    keys = []
+    for k in batch:
+        if not (k.endswith("_lengths") or k in ["utt_id"]):
+            keys.append(k)
+
+    return_dict = defaultdict(list)
+    for ibatch in range(bs):
+        # *: (B, L, ...) -> (1, L2, ...)
+        _sample = {
+            k: batch[k][ibatch, None, : batch[k + "_lengths"][ibatch]]
+            if k + "_lengths" in batch
+            else batch[k][ibatch, None]
+            for k in keys
+        }
+
+        # *_lengths: (B,) -> (1,)
+        _sample.update(
+            {
+                k + "_lengths": batch[k + "_lengths"][ibatch, None]
+                for k in keys
+                if k + "_lengths" in batch
+            }
+        )
+
+        if "utt_id" in batch:
+            _sample["utt_id"] = batch["utt_id"]
+
+        model(**_sample)
+
+        # Derive the attention results
+        for name, output in outputs.items():
+            if isinstance(output, list):
+                if isinstance(output[0], list):
+                    # output: nhead x (Tout, Tin)
+                    output = torch.stack(
+                        [
+                            # Tout x (1, Tin) -> (Tout, Tin)
+                            torch.cat([o[idx] for o in output], dim=0)
+                            for idx in range(len(output[0]))
+                        ],
+                        dim=0,
+                    )
+                else:
+                    # Tout x (1, Tin) -> (Tout, Tin)
+                    output = torch.cat(output, dim=0)
+            else:
+                # output: (1, NHead, Tout, Tin) -> (NHead, Tout, Tin)
+                output = output.squeeze(0)
+            # output: (Tout, Tin) or (NHead, Tout, Tin)
+            return_dict[name].append(output)
+        outputs.clear()
+
+    # 3. Remove all hooks
+    for _, handle in handles.items():
+        handle.remove()
+
+    return dict(return_dict)
+
