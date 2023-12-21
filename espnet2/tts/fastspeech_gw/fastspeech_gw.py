@@ -1531,7 +1531,7 @@ class VariationalFastSpeechGW(AbsTTS):
         dq_mu = hs.new_zeros((hs.size(0), hs.size(1), 0))
         dq_ln_var = hs.new_zeros((hs.size(0), hs.size(1), 0))
         
-        if is_inference:
+        if is_inference and False:
             for enc, dec, lr in zip(
                 self.duration_encoder, 
                 self.duration_decoder,
