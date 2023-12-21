@@ -198,7 +198,7 @@ use_amp: false            # whether to use pytorch amp
 log_interval: 50          # log interval in iterations
 keep_nbest_models: 5      # number of models to keep
 num_att_plot: 3           # number of attention figures to be saved in every check
-num_feats_plot: 0           # number of attention figures to be saved in every check
+num_feats_plot: 3           # number of attention figures to be saved in every check
 seed: 777                 # random seed number
 patience: null            # patience for early stopping
 unused_parameters: true   # needed for multi gpu case

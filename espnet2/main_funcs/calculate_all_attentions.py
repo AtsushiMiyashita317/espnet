@@ -6,6 +6,7 @@ import torch
 import gw
 
 from espnet2.gan_tts.jets.alignments import AlignmentModule
+from espnet2.gan_tts.hifigan.loss import MelSpectrogramLoss
 from espnet2.train.abs_espnet_model import AbsESPnetModel
 from espnet2.tts.abs_tts import AbsTTS
 from espnet.nets.pytorch_backend.rnn.attentions import (
@@ -216,7 +217,11 @@ def calculate_feats(
                 if type(output) is dict:
                     if 'feats' in output:
                         outputs[name] = output['feats']
-                
+            elif isinstance(module, MelSpectrogramLoss):
+                y_hat, y, *_ = input
+                mel_hat, _ = module.wav_to_mel(y_hat.squeeze(1))
+                mel, _ = module.wav_to_mel(y.squeeze(1))
+                outputs[name] = torch.stack([mel, mel_hat], dim=1)
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
 
