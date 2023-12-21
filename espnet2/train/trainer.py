@@ -5,6 +5,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import is_dataclass
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -18,7 +19,7 @@ from typeguard import check_argument_types
 
 from espnet2.iterators.abs_iter_factory import AbsIterFactory
 from espnet2.main_funcs.average_nbest_models import average_nbest_models
-from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions, calculate_feats
+from espnet2.main_funcs.calculate_all_attentions import calculate_all_attentions, calculate_feats, calculate_alignments
 from espnet2.schedulers.abs_scheduler import (
     AbsBatchStepScheduler,
     AbsEpochStepScheduler,
@@ -168,6 +169,7 @@ class Trainer:
         valid_iter_factory: AbsIterFactory,
         plot_attention_iter_factory: Optional[AbsIterFactory],
         plot_feats_iter_factory: Optional[AbsIterFactory],
+        animate_align_iter_factory: Optional[AbsIterFactory],
         trainer_options,
         distributed_option: DistributedOption,
     ) -> None:
@@ -327,6 +329,16 @@ class Trainer:
                             output_dir=output_dir / "feats",
                             summary_writer=train_summary_writer,
                             iterator=plot_feats_iter_factory.build_iter(iepoch),
+                            reporter=sub_reporter,
+                            options=trainer_options,
+                        )
+                if animate_align_iter_factory is not None:
+                    with reporter.observe("align_animate") as sub_reporter:
+                        cls.animate_alignment(
+                            model=model,
+                            output_dir=output_dir / "alignments",
+                            summary_writer=train_summary_writer,
+                            iterator=animate_align_iter_factory.build_iter(iepoch),
                             reporter=sub_reporter,
                             options=trainer_options,
                         )
@@ -965,3 +977,70 @@ class Trainer:
 
                     wandb.log({f"feats plot/{id_}": wandb.Image(fig)})
             reporter.next()
+            
+    @classmethod
+    @torch.no_grad()
+    def animate_alignment(
+        cls,
+        model: torch.nn.Module,
+        output_dir: Optional[Path],
+        summary_writer,
+        iterator: Iterable[Tuple[List[str], Dict[str, torch.Tensor]]],
+        reporter: SubReporter,
+        options: TrainerOptions,
+    ) -> None:
+        assert check_argument_types()
+        import matplotlib.cm as cm
+
+        colormap = cm.get_cmap('viridis')
+        
+        ngpu = options.ngpu
+        no_forward_run = options.no_forward_run
+
+        model.eval()
+        for ids, batch in iterator:
+            assert isinstance(batch, dict), type(batch)
+            assert len(next(iter(batch.values()))) == len(ids), (
+                len(next(iter(batch.values()))),
+                len(ids),
+            )
+
+            batch["utt_id"] = ids
+
+            batch = to_device(batch, "cuda" if ngpu > 0 else "cpu")
+            if no_forward_run:
+                continue
+
+            # 1. Forwarding model and gathering all attentions
+            #    calculate_all_attentions() uses single gpu only.
+            att_dict = defaultdict(lambda: [[]]*len(ids))
+            for i in range(10):
+                d = calculate_alignments(model, batch)
+                for k, l in d.items():
+                    for i, e in enumerate(l):
+                        att_dict[k][i].append(e)
+
+            # 2. Plot attentions: This part is slow due to matplotlib
+            for k, att_list in att_dict.items():
+                assert len(att_list) == len(ids), (len(att_list), len(ids))
+                for id_, att_w in zip(ids, att_list):
+                    # (3, 10, h, w)
+                    att_w = torch.stack(att_w, dim=1)
+                    att_w = torch.unbind(att_w, dim=0)
+                    # (10, h, w*3)
+                    att_w = torch.cat(att_w, dim=-1)
+                    att_w = (att_w - att_w.min())/(att_w.max() - att_w.min())
+                    att_w = att_w.detach().cpu().numpy()
+                    # (10, h, w*3, 3)
+                    att_w = colormap(att_w)[:,:,:,:3]
+                    
+                    att_w = (att_w*255).astype(np.int8)
+                    
+                    att_w = np.transpose(att_w, (0,3,1,2))
+
+                    if options.use_wandb:
+                        import wandb
+
+                        wandb.log({f"alignment animation/{k}_{id_}": wandb.Video(att_w)})
+            reporter.next()
+
