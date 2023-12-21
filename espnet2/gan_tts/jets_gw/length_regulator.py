@@ -4,60 +4,96 @@
 import logging
 
 import torch
+import gw
+
+from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator as GW
+from espnet2.gan_tts.jets_gw.variance_predictor import VariationalVariancePredictor
+from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 
 
-class GaussianUpsampling(torch.nn.Module):
-    """Gaussian upsampling with fixed temperature as in:
-
-    https://arxiv.org/abs/2010.04301
-
-    """
-
-    def __init__(self, delta=0.1):
+class LengthRegulator(torch.nn.Module):
+    def __init__(self, variance_predictor:VariationalVariancePredictor):
         super().__init__()
-        self.delta = delta
+        self.variance_predictor = variance_predictor
+        self.length_regulator = GW()
 
-    def forward(self, hs, ds, h_masks=None, d_masks=None):
-        """Upsample hidden states according to durations.
+    def forward(
+        self, 
+        xs : torch.Tensor, 
+        ys : torch.Tensor, 
+        text_lengths : torch.Tensor, 
+        feats_lengths : torch.Tensor,
+        ds : torch.Tensor = None
+    ):
+        masks = make_pad_mask(feats_lengths).to(xs.device)
+        xs = gw.utils.interpolate(xs, text_lengths, feats_lengths, mode='nearest')
+        pz, _ = self.variance_predictor.inference(xs, masks)
+        
+        pz = torch.nn.functional.pad(pz, [0,0,1,0])[...,:-1,:]
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        pz = pz - pz.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        pz = pz.cumsum(-2)
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        
+        qz, p, q = self.variance_predictor.forward(xs, ys, masks)
+        
+        qz = torch.nn.functional.pad(qz, [0,0,1,0])[...,:-1,:]
+        qz = qz.masked_fill(masks.unsqueeze(-1), 0.0)
+        qz = qz - qz.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        qz = qz.cumsum(-2)
+        qz = qz.masked_fill(masks.unsqueeze(-1), 0.0)
+        
+        xs, func = self.length_regulator(xs, qz, pz, ds, text_lengths, feats_lengths)  # (B, T_feats, adim)
+        
+        return xs, func, p, q
+    
+    def inference(
+        self, 
+        xs : torch.Tensor, 
+        text_lengths : torch.Tensor, 
+        feats_lengths : torch.Tensor
+    ):
+        masks = make_pad_mask(feats_lengths).to(xs.device)
+        xs = gw.utils.interpolate(xs, text_lengths, feats_lengths, mode='nearest')
+        pz, _ = self.variance_predictor.inference(xs, masks)
+        
+        pz = torch.nn.functional.pad(pz, [0,0,1,0])[...,:-1,:]
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        pz = pz - pz.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        pz = pz.cumsum(-2)
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        
+        xs, func = self.length_regulator(xs, pz)  # (B, T_feats, adim)
+        
+        return xs, func, pz
+    
+    def sampling(
+        self, 
+        n : int,
+        xs : torch.Tensor, 
+        ys : torch.Tensor, 
+        text_lengths : torch.Tensor, 
+        feats_lengths : torch.Tensor,
+    ):
+        masks = make_pad_mask(feats_lengths).to(xs.device)
+        xs_ = gw.utils.interpolate(xs, text_lengths, feats_lengths, mode='nearest')
+        qz, pz = self.variance_predictor.sampling(n, xs_, ys, masks)
 
-        Args:
-            hs (Tensor): Batched hidden state to be expanded (B, T_text, adim).
-            ds (Tensor): Batched token duration (B, T_text).
-            h_masks (Tensor): Mask tensor (B, T_feats).
-            d_masks (Tensor): Mask tensor (B, T_text).
-
-        Returns:
-            Tensor: Expanded hidden state (B, T_feat, adim).
-
-        """
-        B = ds.size(0)
-        device = ds.device
-
-        if ds.sum() == 0:
-            logging.warning(
-                "predicted durations includes all 0 sequences. "
-                "fill the first element with 1."
-            )
-            # NOTE(kan-bayashi): This case must not be happened in teacher forcing.
-            #   It will be happened in inference with a bad duration predictor.
-            #   So we do not need to care the padded sequence case here.
-            ds[ds.sum(dim=1).eq(0)] = 1
-
-        if h_masks is None:
-            T_feats = ds.sum().int()
-        else:
-            T_feats = h_masks.size(-1)
-        t = torch.arange(0, T_feats).unsqueeze(0).repeat(B, 1).to(device).float()
-        if h_masks is not None:
-            t = t * h_masks.float()
-
-        c = ds.cumsum(dim=-1) - ds / 2
-        energy = -1 * self.delta * (t.unsqueeze(-1) - c.unsqueeze(1)) ** 2
-        if d_masks is not None:
-            energy = energy.masked_fill(
-                ~(d_masks.unsqueeze(1).repeat(1, T_feats, 1)), -float("inf")
-            )
-
-        p_attn = torch.softmax(energy, dim=2)  # (B, T_feats, T_text)
-        hs = torch.matmul(p_attn, hs)
-        return hs
+        pz = torch.nn.functional.pad(pz, [0,0,1,0])[...,:-1,:]
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        pz = pz - pz.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        pz = pz.cumsum(-2)
+        pz = pz.masked_fill(masks.unsqueeze(-1), 0.0)
+        pz = pz*torch.unsqueeze(text_lengths/feats_lengths, -1)
+            
+        qz = torch.nn.functional.pad(qz, [0,0,1,0])[...,:-1,:]
+        qz = qz.masked_fill(masks.unsqueeze(-1), 0.0)
+        qz = qz - qz.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        qz = qz.cumsum(-2)
+        qz = qz.masked_fill(masks.unsqueeze(-1), 0.0)
+        qz = qz*torch.unsqueeze(text_lengths/feats_lengths, -1)
+        
+        m = torch.eye(xs.size(-2), device=xs.device).unsqueeze(0)
+        pm, _ = self.length_regulator.forward(m, pz)
+        qm, _ = self.length_regulator.forward(m, qz)
+        return pm, qm
