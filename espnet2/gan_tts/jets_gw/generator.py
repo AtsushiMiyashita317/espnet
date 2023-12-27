@@ -707,6 +707,8 @@ class JETSGWGenerator(torch.nn.Module):
         spembs: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         use_teacher_forcing: bool = False,
+        *args,
+        **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Run inference.
 
@@ -805,8 +807,8 @@ class JETSGWGenerator(torch.nn.Module):
             p_outs = pitch
             e_outs = energy
         else:
-            p_outs = self.pitch_predictor(hs, d_masks.unsqueeze(-1))
-            e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
+            p_outs = self.pitch_predictor(hs, d_masks)
+            e_outs = self.energy_predictor(hs, d_masks)
             
         p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
         e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
