@@ -6,6 +6,7 @@
 from typing import Any, Dict, Optional
 
 import torch
+import gw
 from typeguard import check_argument_types
 
 from espnet2.gan_tts.abs_gan_tts import AbsGANTTS
@@ -631,7 +632,7 @@ class JETSGW(AbsGANTTS):
                 feats_lengths=feats_lengths,
                 pitch=pitch,
                 energy=energy,
-                use_teacher_forcing=use_teacher_forcing,
+                use_teacher_forcing=False,
                 **kwargs,
             )
         else:
@@ -649,4 +650,7 @@ class JETSGW(AbsGANTTS):
                 feats_lengths=feats_lengths,
                 **kwargs,
             )
-        return dict(wav=wav.view(-1), duration=dur[0])
+            
+        map = gw.cubic_interpolation(torch.eye(dur.size(-1), device=dur.device).unsqueeze(0), dur.detach()).transpose(-1,-2)
+        map = map.detach().cpu()
+        return dict(wav=wav.view(-1), duration=dur[0], att_w=map[0])
