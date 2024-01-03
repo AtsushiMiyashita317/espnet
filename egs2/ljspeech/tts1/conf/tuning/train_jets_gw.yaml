@@ -140,7 +140,7 @@ tts_conf:
     lambda_adv: 1.0                      # loss scaling coefficient for adversarial loss
     lambda_mel: 45.0                     # loss scaling coefficient for Mel loss
     lambda_feat_match: 2.0               # loss scaling coefficient for feat match loss
-    lambda_var: 1.0
+    lambda_var: 100.0
     lambda_align: 2.0
     # others
     sampling_rate: 22050                 # needed in the inference for saving wav
@@ -199,6 +199,7 @@ log_interval: 50          # log interval in iterations
 keep_nbest_models: 5      # number of models to keep
 num_att_plot: 3           # number of attention figures to be saved in every check
 num_feats_plot: 3           # number of attention figures to be saved in every check
+num_align_animate: 1           # number of attention figures to be saved in every check
 seed: 777                 # random seed number
 patience: null            # patience for early stopping
 unused_parameters: true   # needed for multi gpu case

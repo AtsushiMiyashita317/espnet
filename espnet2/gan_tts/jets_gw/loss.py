@@ -11,8 +11,44 @@ import torch.nn.functional as F
 from scipy.stats import betabinom
 from typeguard import check_argument_types
 
-from espnet2.tts.fastspeech_gw.variational import KLDivergenceLoss
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
+
+
+class KLDivergenceLoss(torch.nn.Module):
+    """Loss function module for variance predictor.
+    """
+
+    def __init__(self, reduction="mean", mu=0, log_var=0):
+        """Initilize duration predictor loss module.
+
+        Args:
+            reduction (str): Reduction type in loss calculation.
+
+        """
+        super(KLDivergenceLoss, self).__init__()
+        self.reduction = reduction
+        self.register_buffer('mu', torch.tensor(mu))
+        self.register_buffer('log_var', torch.tensor(log_var))
+        
+    def forward(self, q:torch.Tensor, p:torch.Tensor=None, masks:torch.Tensor=None):
+        if p is None:
+            mu_p = self.mu
+            log_var_p = self.log_var
+        else:
+            mu_p, log_var_p = p.chunk(2, -1)
+        mu_q = q
+        kl_loss = 0.5 * (
+            log_var_p
+            + torch.square(mu_q - mu_p)*torch.exp(-log_var_p) 
+            - 1
+        )
+        if masks is not None:
+            kl_loss = kl_loss.masked_select(masks)
+        if self.reduction == 'sum':
+            kl_loss = kl_loss.sum()
+        elif self.reduction == 'mean':
+            kl_loss = kl_loss.mean()
+        return kl_loss
 
 
 class VarianceLoss(torch.nn.Module):
@@ -36,17 +72,12 @@ class VarianceLoss(torch.nn.Module):
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
-        self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
         self,
         d_outs: torch.Tensor,
         ds: torch.Tensor,
-        p_outs: torch.Tensor,
-        ps: torch.Tensor,
-        e_outs: torch.Tensor,
-        es: torch.Tensor,
         olens: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
@@ -68,17 +99,11 @@ class VarianceLoss(torch.nn.Module):
         """
         # apply mask to remove padded part
         masks = make_non_pad_mask(olens).unsqueeze(-1).to(ds.device)
-        p_outs = p_outs.masked_select(masks)
-        e_outs = e_outs.masked_select(masks)
-        ps = ps.masked_select(masks)
-        es = es.masked_select(masks)
 
         # calculate loss
-        duration_loss = self.duration_criterion(ds, d_outs, masks)*10
-        pitch_loss = self.mse_criterion(p_outs, ps)
-        energy_loss = self.mse_criterion(e_outs, es)
+        duration_loss = self.duration_criterion(ds, d_outs, masks)
 
-        return duration_loss, pitch_loss, energy_loss
+        return duration_loss
 
 
 class ForwardSumLoss(torch.nn.Module):

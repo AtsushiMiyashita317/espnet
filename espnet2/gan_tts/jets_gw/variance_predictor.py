@@ -13,6 +13,7 @@ class VariationalVariancePredictor(torch.nn.Module):
         n_chans,
         kernel_size,
     ):
+        super().__init__()
         # define duration predictor
         self.prior_encoder = VariancePredictor(
             idim=xdim,
@@ -25,7 +26,7 @@ class VariationalVariancePredictor(torch.nn.Module):
             
         self.prior_decoder = VariancePredictor(
             idim=hdim,
-            odim=odim,
+            odim=odim*2,
             n_layers=n_layers,
             n_chans=n_chans,
             kernel_size=kernel_size,
@@ -35,7 +36,7 @@ class VariationalVariancePredictor(torch.nn.Module):
         self.posterior_encoder = AlignmentModule(
             tdim=xdim,
             fdim=ydim,
-            odim=hdim*2,
+            odim=hdim,
             n_layers=n_layers,
             n_chans=n_chans,
             kernel_size=kernel_size,
@@ -57,17 +58,17 @@ class VariationalVariancePredictor(torch.nn.Module):
         _ = self.prior_encoder.forward(xs, masks) # (B, T_text, adim)
         mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
         hs = self.posterior_encoder.forward(xs, ys, masks) # (B, T_text, adim)
-        mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-        hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
+        mu2 = hs  # (B, T_text, adim)
+        hs = mu2
         
         _ = self.prior_decoder.forward(hs, masks)  # (B, T_text, n_iter)
         mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
         hs = self.posterior_decoder.forward(hs, ys, masks)  # (B, T_text, n_iter)
-        mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-        zs = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
+        mu4 = hs  # (B, T_text, n_iter)
+        zs = mu4
         
         p = torch.cat([mu1, mu3, ln_var1, ln_var3], dim=-1)
-        q = torch.cat([mu2, mu4, ln_var2, ln_var4], dim=-1)
+        q = torch.cat([mu2, mu4], dim=-1)
         
         return zs, p, q
         

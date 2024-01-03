@@ -426,12 +426,8 @@ class JETSGW(AbsGANTTS):
         (
             speech_hat_,
             start_idxs,
-            d_outs,
             ds,
-            p_outs,
-            ps,
-            e_outs,
-            es,
+            d_outs,
         ) = outs
         speech_ = get_segments(
             x=speech,
@@ -449,15 +445,13 @@ class JETSGW(AbsGANTTS):
         mel_loss = self.mel_loss(speech_hat_, speech_)
         adv_loss = self.generator_adv_loss(p_hat)
         feat_match_loss = self.feat_match_loss(p_hat, p)
-        dur_loss, pitch_loss, energy_loss = self.var_loss(
-            d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
-        )
+        dur_loss = self.var_loss(d_outs, ds, feats_lengths)
         
         mel_loss = mel_loss * self.lambda_mel
         adv_loss = adv_loss * self.lambda_adv
         feat_match_loss = feat_match_loss * self.lambda_feat_match
         g_loss = mel_loss + adv_loss + feat_match_loss
-        var_loss = (dur_loss + pitch_loss + energy_loss) * self.lambda_var
+        var_loss = dur_loss * self.lambda_var
         
         loss = g_loss + var_loss
 
@@ -469,8 +463,6 @@ class JETSGW(AbsGANTTS):
             generator_g_adv_loss=adv_loss.item(),
             generator_g_feat_match_loss=feat_match_loss.item(),
             generator_var_dur_loss=dur_loss.item(),
-            generator_var_pitch_loss=pitch_loss.item(),
-            generator_var_energy_loss=energy_loss.item(),
         )
 
         loss, stats, weight = force_gatherable((loss, stats, batch_size), loss.device)

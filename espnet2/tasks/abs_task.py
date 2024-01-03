@@ -1342,7 +1342,7 @@ class AbsTask(ABC):
                     mode="animate_align",
                 )
             else:
-                plot_attention_iter_factory = None
+                animate_align_iter_factory = None
 
             # 8. Start training
             if args.use_wandb:
