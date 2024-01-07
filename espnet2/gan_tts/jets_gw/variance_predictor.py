@@ -36,7 +36,7 @@ class VariationalVariancePredictor(torch.nn.Module):
         self.posterior_encoder = AlignmentModule(
             tdim=xdim,
             fdim=ydim,
-            odim=hdim,
+            odim=hdim*2,
             n_layers=n_layers,
             n_chans=n_chans,
             kernel_size=kernel_size,
@@ -46,7 +46,7 @@ class VariationalVariancePredictor(torch.nn.Module):
         self.posterior_decoder = AlignmentModule(
             tdim=hdim,
             fdim=ydim,
-            odim=odim,
+            odim=odim*2,
             n_layers=n_layers,
             n_chans=n_chans,
             kernel_size=kernel_size,
