@@ -427,8 +427,12 @@ class JETSGW(AbsGANTTS):
         (
             speech_hat_,
             start_idxs,
-            ds,
             d_outs,
+            ds,
+            p_outs,
+            ps,
+            e_outs,
+            es,
         ) = outs
         speech_ = get_segments(
             x=speech,
@@ -446,13 +450,15 @@ class JETSGW(AbsGANTTS):
         mel_loss = self.mel_loss(speech_hat_, speech_)
         adv_loss = self.generator_adv_loss(p_hat)
         feat_match_loss = self.feat_match_loss(p_hat, p)
-        dur_loss = self.var_loss(d_outs, ds, feats_lengths)
+        dur_loss, pitch_loss, energy_loss = self.var_loss(
+            d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
+        )
         
         mel_loss = mel_loss * self.lambda_mel
         adv_loss = adv_loss * self.lambda_adv
         feat_match_loss = feat_match_loss * self.lambda_feat_match
         g_loss = mel_loss + adv_loss + feat_match_loss
-        var_loss = dur_loss * self.lambda_var
+        var_loss = (dur_loss + pitch_loss + energy_loss) * self.lambda_var
         
         loss = g_loss + var_loss
 

@@ -37,8 +37,10 @@ class KLDivergenceLoss(torch.nn.Module):
         else:
             mu_p, log_var_p = p.chunk(2, -1)
         mu_q = q
+        log_var_q = -100
         kl_loss = 0.5 * (
-            log_var_p
+            log_var_p - log_var_q 
+            + torch.exp(log_var_q - log_var_p) 
             + torch.square(mu_q - mu_p)*torch.exp(-log_var_p) 
             - 1
         )
@@ -72,16 +74,20 @@ class VarianceLoss(torch.nn.Module):
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
+        self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.duration_criterion = KLDivergenceLoss(reduction=reduction)
 
     def forward(
         self,
         d_outs: torch.Tensor,
         ds: torch.Tensor,
+        p_outs: torch.Tensor,
+        ps: torch.Tensor,
+        e_outs: torch.Tensor,
+        es: torch.Tensor,
         olens: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
-
         Args:
             d_outs (LongTensor): Batch of outputs of duration predictor (B, T_text).
             ds (LongTensor): Batch of durations (B, T_text).
@@ -90,20 +96,24 @@ class VarianceLoss(torch.nn.Module):
             e_outs (Tensor): Batch of outputs of energy predictor (B, T_text, 1).
             es (Tensor): Batch of target token-averaged energy (B, T_text, 1).
             ilens (LongTensor): Batch of the lengths of each input (B,).
-
         Returns:
             Tensor: Duration predictor loss value.
             Tensor: Pitch predictor loss value.
             Tensor: Energy predictor loss value.
-
         """
         # apply mask to remove padded part
         masks = make_non_pad_mask(olens).unsqueeze(-1).to(ds.device)
+        p_outs = p_outs.masked_select(masks)
+        e_outs = e_outs.masked_select(masks)
+        ps = ps.masked_select(masks)
+        es = es.masked_select(masks)
 
         # calculate loss
         duration_loss = self.duration_criterion(ds, d_outs, masks)
+        pitch_loss = self.mse_criterion(p_outs, ps)
+        energy_loss = self.mse_criterion(e_outs, es)
 
-        return duration_loss
+        return duration_loss, pitch_loss, energy_loss
 
 
 class ForwardSumLoss(torch.nn.Module):

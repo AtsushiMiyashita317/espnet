@@ -384,7 +384,44 @@ class JETSGWGenerator(torch.nn.Module):
         
         # define length regulator
         self.length_regulator = LengthRegulator()
-
+        
+        # define pitch predictor
+        self.pitch_predictor = VariancePredictor(
+            idim=adim,
+            n_layers=pitch_predictor_layers,
+            n_chans=pitch_predictor_chans,
+            kernel_size=pitch_predictor_kernel_size,
+            dropout_rate=pitch_predictor_dropout,
+        )
+        # NOTE(kan-bayashi): We use continuous pitch + FastPitch style avg
+        self.pitch_embed = torch.nn.Sequential(
+            torch.nn.Conv1d(
+                in_channels=1,
+                out_channels=adim,
+                kernel_size=pitch_embed_kernel_size,
+                padding=(pitch_embed_kernel_size - 1) // 2,
+            ),
+            torch.nn.Dropout(pitch_embed_dropout),
+        )
+        # define energy predictor
+        self.energy_predictor = VariancePredictor(
+            idim=adim,
+            n_layers=energy_predictor_layers,
+            n_chans=energy_predictor_chans,
+            kernel_size=energy_predictor_kernel_size,
+            dropout_rate=energy_predictor_dropout,
+        )
+        # NOTE(kan-bayashi): We use continuous enegy + FastPitch style avg
+        self.energy_embed = torch.nn.Sequential(
+            torch.nn.Conv1d(
+                in_channels=1,
+                out_channels=adim,
+                kernel_size=energy_embed_kernel_size,
+                padding=(energy_embed_kernel_size - 1) // 2,
+            ),
+            torch.nn.Dropout(energy_embed_dropout),
+        )
+        
         # define decoder
         # NOTE: we use encoder as decoder
         # because fastspeech's decoder is the same as encoder
@@ -558,6 +595,20 @@ class JETSGWGenerator(torch.nn.Module):
         
         hs, func = self.length_regulator(hs, ws, vs, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)    
 
+        if self.stop_gradient_from_pitch_predictor:
+            p_outs = self.pitch_predictor(hs.detach(), d_masks)
+        else:
+            p_outs = self.pitch_predictor(hs, d_masks)
+        if self.stop_gradient_from_energy_predictor:
+            e_outs = self.energy_predictor(hs.detach(), d_masks)
+        else:
+            e_outs = self.energy_predictor(hs, d_masks)
+        # use groundtruth in training
+        p_embs = self.pitch_embed(pitch.transpose(1, 2)).transpose(1, 2)
+        e_embs = self.energy_embed(energy.transpose(1, 2)).transpose(1, 2)
+        
+        hs = hs + e_embs + p_embs
+
         # forward decoder
         h_masks = self._source_mask(feats_lengths)
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
@@ -574,8 +625,12 @@ class JETSGWGenerator(torch.nn.Module):
         return (
             wav,
             z_start_idxs,
+            dp,
             dq,
-            dp
+            p_outs,
+            pitch,
+            e_outs,
+            energy,
         )
 
     def inference(
@@ -656,6 +711,17 @@ class JETSGWGenerator(torch.nn.Module):
 
         # upsampling
         hs, func = self.length_regulator(hs, ws, None, None, text_lengths, feats_lengths)  # (B, T_feats, adim)
+        
+        if use_teacher_forcing:
+            p_outs = pitch
+            e_outs = energy
+        else:
+            p_outs = self.pitch_predictor(hs, d_masks)
+            e_outs = self.energy_predictor(hs, d_masks)
+
+        p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
+        e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
+        hs = hs + e_embs + p_embs
         
         # forward decoder
         if feats_lengths is not None:
