@@ -110,6 +110,9 @@ class LengthRegulator(torch.nn.Module):
         f = gw.gw_ode(ds[:,:,0])
         for i in range(1, ds.size(-1)):
             f = gw.gw_ode(ds[:,:,i], f=f)
+        f_ = f.round()
         ys = gw.cubic_interpolation(xs.transpose(-1,-2), f).transpose(-1,-2)
-        return ys, f
+        ys_ = gw.cubic_interpolation(xs.transpose(-1,-2), f_).transpose(-1,-2)
+        ys = ys + (ys_ - ys).detach()
+        return ys, f_
     

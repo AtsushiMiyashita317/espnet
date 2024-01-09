@@ -1582,13 +1582,13 @@ class VariationalFastSpeechGW(AbsTTS):
                 mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
                 hs = aenc.forward(hs, ys, feat_masks) # (B, T_text, adim)
                 mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-                hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()*0
+                hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
                 
                 _ = ddec.forward(hs, feat_masks)  # (B, T_text, n_iter)
                 mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
                 hs = adec.forward(hs, ys, feat_masks)  # (B, T_text, n_iter)
                 mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-                ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()*0
+                ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
                 
                 dp_mu = torch.cat([dp_mu, mu1, mu3], dim=-1)
                 dq_mu = torch.cat([dq_mu, mu2, mu4], dim=-1)
