@@ -190,7 +190,7 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         self.use_weighted_masking = use_weighted_masking
         self.lr_mode = lr_mode
         self.hop_length = lr_n_fft//4
-        self.register_buffer('processed_mbins', torch.tensor(0.0))
+        self.processed_mbins = torch.nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.grad_rate_begin = 120.0
         self.grad_rate_end = 240.0
 
