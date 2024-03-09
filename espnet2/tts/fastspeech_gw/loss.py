@@ -190,6 +190,9 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         self.use_weighted_masking = use_weighted_masking
         self.lr_mode = lr_mode
         self.hop_length = lr_n_fft//4
+        self.processed_mbins = 0.0
+        self.grad_rate_begin = 12000.0
+        self.grad_rate_end = 24000.0
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
@@ -249,8 +252,17 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(ds, d_outs)
+        t = self.grad_rate()
+        duration_loss = self.duration_criterion(ds*t + ds.detach()*(1-t), d_outs, pitch_masks)
+        self.count_iteration(olens.sum().item())
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 
-        return l1_loss, duration_loss*5, pitch_loss, energy_loss
+        return l1_loss, duration_loss, pitch_loss, energy_loss
+    
+    def count_iteration(self, bins):
+        if self.training:
+            self.processed_mbins += bins/1000000
+    
+    def grad_rate(self):
+        return max(0, min(1, (self.processed_mbins-self.grad_rate_begin)/(self.grad_rate_end-self.grad_rate_begin)))
