@@ -265,4 +265,5 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
             self.processed_mbins += bins/1000000
     
     def grad_rate(self):
-        return max(0, min(1, (self.processed_mbins-self.grad_rate_begin)/(self.grad_rate_end-self.grad_rate_begin)))
+        b = self.processed_mbins.item()
+        return max(0, min(1, (b-self.grad_rate_begin)/(self.grad_rate_end-self.grad_rate_begin)))
