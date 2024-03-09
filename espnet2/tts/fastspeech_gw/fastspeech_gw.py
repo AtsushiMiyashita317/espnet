@@ -1447,7 +1447,7 @@ class VariationalFastSpeechGW(AbsTTS):
             pitch_loss=pitch_loss.item(),
             energy_loss=energy_loss.item(),
             processed_mbins=self.criterion.processed_mbins.item(),
-            grad_rate=self.criterion.grad_rate().item()
+            grad_rate=self.criterion.grad_rate()
         )
 
         # report extra information
