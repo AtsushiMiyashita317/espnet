@@ -17,6 +17,42 @@ from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 
 
+class ResBlock(torch.nn.Module):
+    def __init__(
+        self, 
+        n_chans: int = 384,
+        kernel_size: int = 3,
+        bias: bool = True,
+    ):
+        super().__init__()
+        self.conv1 = torch.nn.Conv1d(
+            n_chans,
+            n_chans,
+            kernel_size,
+            stride=1,
+            padding=(kernel_size - 1) // 2,
+            bias=bias,
+        )
+        self.conv2 = torch.nn.Conv1d(
+            n_chans,
+            n_chans,
+            kernel_size,
+            stride=1,
+            padding=(kernel_size - 1) // 2,
+            bias=bias,
+        )
+        self.act = torch.nn.ReLU()
+        
+    def forward(self, x):
+        res = x
+        x = self.conv1(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        x = res + x
+        x = self.act(x)
+        return x
+
+
 class VariancePredictor(torch.nn.Module):
     """Variance predictor module.
 
@@ -37,6 +73,7 @@ class VariancePredictor(torch.nn.Module):
         kernel_size: int = 3,
         bias: bool = True,
         dropout_rate: float = 0.5,
+        use_resblock: bool = False
     ):
         """Initilize duration predictor module.
 
@@ -53,21 +90,34 @@ class VariancePredictor(torch.nn.Module):
         self.conv = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = idim if idx == 0 else n_chans
-            self.conv += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                        bias=bias,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
+            if use_resblock and idx != 0:
+                self.conv += [
+                    torch.nn.Sequential(
+                        ResBlock(
+                            n_chans,
+                            kernel_size,
+                            bias=bias,
+                        ),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]
+            else:
+                self.conv += [
+                    torch.nn.Sequential(
+                        torch.nn.Conv1d(
+                            in_chans,
+                            n_chans,
+                            kernel_size,
+                            stride=1,
+                            padding=(kernel_size - 1) // 2,
+                            bias=bias,
+                        ),
+                        torch.nn.ReLU(),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]
         self.linear = torch.nn.Linear(n_chans, odim)
 
     def forward(self, xs: torch.Tensor, x_masks: torch.Tensor = None) -> torch.Tensor:
@@ -106,6 +156,7 @@ class AlignmentModule(torch.nn.Module):
         n_chans=384, 
         kernel_size=3,
         dropout_rate=0.1, 
+        use_resblock=False
     ):
         """Initilize duration predictor module.
 
@@ -123,39 +174,63 @@ class AlignmentModule(torch.nn.Module):
         self.conv_feat = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = fdim if idx == 0 else n_chans
-            self.conv_feat += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
+            if use_resblock and idx != 0:
+                self.conv_feat += [
+                    torch.nn.Sequential(
+                        ResBlock(
+                            n_chans,
+                            kernel_size,
+                        ),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]
+            else:
+                self.conv_feat += [
+                    torch.nn.Sequential(
+                        torch.nn.Conv1d(
+                            in_chans,
+                            n_chans,
+                            kernel_size,
+                            stride=1,
+                            padding=(kernel_size - 1) // 2,
+                        ),
+                        torch.nn.ReLU(),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]
         self.linear_feat = torch.nn.Linear(n_chans, tdim)
         
         self.conv_out = torch.nn.ModuleList()
         for idx in range(n_layers):
             in_chans = tdim if idx == 0 else n_chans
-            self.conv_out += [
-                torch.nn.Sequential(
-                    torch.nn.Conv1d(
-                        in_chans,
-                        n_chans,
-                        kernel_size,
-                        stride=1,
-                        padding=(kernel_size - 1) // 2,
-                    ),
-                    torch.nn.ReLU(),
-                    LayerNorm(n_chans, dim=1),
-                    torch.nn.Dropout(dropout_rate),
-                )
-            ]
+            if use_resblock and idx != 0:
+                self.conv_out += [
+                    torch.nn.Sequential(
+                        ResBlock(
+                            n_chans,
+                            kernel_size,
+                        ),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]  
+            else:
+                self.conv_out += [
+                    torch.nn.Sequential(
+                        torch.nn.Conv1d(
+                            in_chans,
+                            n_chans,
+                            kernel_size,
+                            stride=1,
+                            padding=(kernel_size - 1) // 2,
+                        ),
+                        torch.nn.ReLU(),
+                        LayerNorm(n_chans, dim=1),
+                        torch.nn.Dropout(dropout_rate),
+                    )
+                ]
         self.linear_out = torch.nn.Linear(n_chans, odim)
 
     def forward(self, texts:torch.Tensor, feats:torch.Tensor, masks:torch.Tensor) -> torch.Tensor:

@@ -249,8 +249,8 @@ class VariationalFastSpeechGWLoss(torch.nn.Module):
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
             l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(ds, d_outs)
+        duration_loss = self.duration_criterion(ds, d_outs, pitch_masks)
         pitch_loss = self.mse_criterion(p_outs, ps)
         energy_loss = self.mse_criterion(e_outs, es)
 
-        return l1_loss, duration_loss*5, pitch_loss, energy_loss
+        return l1_loss, duration_loss, pitch_loss, energy_loss

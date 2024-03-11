@@ -893,6 +893,8 @@ class VariationalFastSpeechGW(AbsTTS):
         duration_predictor_chans: int = 384,
         duration_predictor_kernel_size: int = 3,
         duration_predictor_iter: int = 16,
+        duration_predictor_use_resblock: bool = False,
+        duration_loss_lam: float = 1e-0,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -1163,63 +1165,62 @@ class VariationalFastSpeechGW(AbsTTS):
 
         # define duration predictor
         self.duration_encoder = torch.nn.ModuleList()
-        for _ in range(duration_predictor_layers):
+        for _ in range(1):
             self.duration_encoder.append(
                 VariancePredictor(
                     idim=adim,
                     odim=adim*2,
-                    n_layers=4,
+                    n_layers=duration_predictor_layers*2,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
-                    dropout_rate=0.0   
+                    dropout_rate=0.0,
+                    use_resblock=duration_predictor_use_resblock 
                 )
             )
             
         self.duration_decoder = torch.nn.ModuleList()
-        for _ in range(duration_predictor_layers):
+        for _ in range(1):
             self.duration_decoder.append(
                 VariancePredictor(
                     idim=adim,
                     odim=duration_predictor_iter,
-                    n_layers=4,
+                    n_layers=duration_predictor_layers*2,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
-                    dropout_rate=0.0   
+                    dropout_rate=0.0,
+                    use_resblock=duration_predictor_use_resblock 
                 )
             )
             
         self.alignment_encoder = torch.nn.ModuleList()
-        for _ in range(duration_predictor_layers):
+        for _ in range(1):
             self.alignment_encoder.append(
                 AlignmentModule(
                     tdim=adim,
                     fdim=odim,
                     odim=adim*2,
-                    n_layers=4,
+                    n_layers=duration_predictor_layers,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
-                    dropout_rate=0.0   
+                    dropout_rate=0.0,
+                    use_resblock=duration_predictor_use_resblock 
                 )
             )
             
         self.alignment_decoder = torch.nn.ModuleList()
-        for _ in range(duration_predictor_layers):
+        for _ in range(1):
             self.alignment_decoder.append(
                 AlignmentModule(
                     tdim=adim,
                     fdim=odim,
                     odim=duration_predictor_iter,
-                    n_layers=4,
+                    n_layers=duration_predictor_layers,
                     n_chans=duration_predictor_chans,
                     kernel_size=duration_predictor_kernel_size,
-                    dropout_rate=0.0   
+                    dropout_rate=0.0,
+                    use_resblock=duration_predictor_use_resblock 
                 )
             )
-        
-        self.stft = Stft(n_fft=lr_n_fft)
-        self.istft = Istft()
-        
-        self.sampling = Sample()
 
         # define pitch predictor
         self.pitch_predictor = VariancePredictor(
@@ -1341,6 +1342,8 @@ class VariationalFastSpeechGW(AbsTTS):
             lr_mode='after',
             lr_n_fft=lr_n_fft
         )
+        
+        self.duration_loss_lam = duration_loss_lam
 
     def forward(
         self,
@@ -1439,7 +1442,7 @@ class VariationalFastSpeechGW(AbsTTS):
             ilens=ilens,
             olens=olens
         )
-        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        loss = l1_loss + duration_loss*self.duration_loss_lam + pitch_loss + energy_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),

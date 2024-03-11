@@ -26,6 +26,8 @@ tts_conf:             # keyword arguments for the selected model
     duration_predictor_layers: 6      # number of layers of duration predictor
     duration_predictor_chans: 256     # number of channels of duration predictor
     duration_predictor_kernel_size: 3 # filter size of duration predictor
+    duration_predictor_use_resblock: False # filter size of duration predictor
+    duration_loss_lam: 1.0 # filter size of duration predictor
     postnet_layers: 5                 # number of layers of postnset
     postnet_filts: 5                  # filter size of conv layers in postnet
     postnet_chans: 256                # number of channels of conv layers in postnet
