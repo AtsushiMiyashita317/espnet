@@ -23,9 +23,9 @@ tts_conf:
         dunits: 1024                                 # number of decoder ff units
         positionwise_layer_type: conv1d              # type of position-wise layer
         positionwise_conv_kernel_size: 3             # kernel size of position wise conv layer
-        duration_predictor_layers: 2                 # number of layers of duration predictor
+        duration_predictor_layers: 4                 # number of layers of duration predictor
         duration_predictor_chans: 256                # number of channels of duration predictor
-        duration_predictor_kernel_size: 3            # filter size of duration predictor
+        duration_predictor_kernel_size: 9            # filter size of duration predictor
         duration_predictor_iter: 16                  # filter size of duration predictor
         duration_predictor_use_resblock: False       # filter size of duration predictor
         use_masking: True                            # whether to apply masking for padded part in loss calculation
