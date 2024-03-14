@@ -108,7 +108,7 @@ class ESPnetGANTTSModel(AbsGANESPnetModel):
                     speech,
                     speech_lengths,
                 )
-            if self.pitch_extract is not None and pitch is None:
+            if self.pitch_extract is not None:
                 pitch, pitch_lengths = self.pitch_extract(
                     speech,
                     speech_lengths,
@@ -116,7 +116,7 @@ class ESPnetGANTTSModel(AbsGANESPnetModel):
                     durations=durations,
                     durations_lengths=durations_lengths,
                 )
-            if self.energy_extract is not None and energy is None:
+            if self.energy_extract is not None:
                 energy, energy_lengths = self.energy_extract(
                     speech,
                     speech_lengths,

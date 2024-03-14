@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 import torch
 from typeguard import check_argument_types
+import gw
 
 from espnet2.gan_tts.abs_gan_tts import AbsGANTTS
 from espnet2.gan_tts.hifigan import (
@@ -22,13 +23,13 @@ from espnet2.gan_tts.hifigan.loss import (
     GeneratorAdversarialLoss,
     MelSpectrogramLoss,
 )
-from espnet2.gan_tts.jets.generator import JETSGenerator
-from espnet2.gan_tts.jets.loss import ForwardSumLoss, VarianceLoss
+from espnet2.gan_tts.jets_gw.generator import JETSGWGenerator
+from espnet2.gan_tts.jets_gw.loss import VarianceLoss
 from espnet2.gan_tts.utils import get_segments
 from espnet2.torch_utils.device_funcs import force_gatherable
 
 AVAILABLE_GENERATERS = {
-    "jets_generator": JETSGenerator,
+    "jets_generator": JETSGWGenerator,
 }
 AVAILABLE_DISCRIMINATORS = {
     "hifigan_period_discriminator": HiFiGANPeriodDiscriminator,
@@ -94,6 +95,8 @@ class JETSGW(AbsGANTTS):
             "duration_predictor_chans": 384,
             "duration_predictor_kernel_size": 3,
             "duration_predictor_dropout_rate": 0.1,
+            "duration_predictor_iter": 16,
+            "duration_predictor_use_resblock": False,
             "energy_predictor_layers": 2,
             "energy_predictor_chans": 384,
             "energy_predictor_kernel_size": 3,
@@ -210,6 +213,7 @@ class JETSGW(AbsGANTTS):
         lambda_mel: float = 45.0,
         lambda_feat_match: float = 2.0,
         lambda_var: float = 1.0,
+        lambda_dur: float = 1.0,
         lambda_align: float = 2.0,
         cache_generator_outputs: bool = True,
     ):
@@ -266,13 +270,13 @@ class JETSGW(AbsGANTTS):
             **mel_loss_params,
         )
         self.var_loss = VarianceLoss()
-        self.forwardsum_loss = ForwardSumLoss()
 
         # coefficients
         self.lambda_adv = lambda_adv
         self.lambda_mel = lambda_mel
         self.lambda_feat_match = lambda_feat_match
         self.lambda_var = lambda_var
+        self.lambda_dur = lambda_dur
         self.lambda_align = lambda_align
 
         # cache
@@ -424,8 +428,6 @@ class JETSGW(AbsGANTTS):
         # parse outputs
         (
             speech_hat_,
-            bin_loss,
-            log_p_attn,
             start_idxs,
             d_outs,
             ds,
@@ -451,32 +453,27 @@ class JETSGW(AbsGANTTS):
         adv_loss = self.generator_adv_loss(p_hat)
         feat_match_loss = self.feat_match_loss(p_hat, p)
         dur_loss, pitch_loss, energy_loss = self.var_loss(
-            d_outs, ds, p_outs, ps, e_outs, es, text_lengths
+            d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
         )
-        forwardsum_loss = self.forwardsum_loss(log_p_attn, text_lengths, feats_lengths)
 
         mel_loss = mel_loss * self.lambda_mel
         adv_loss = adv_loss * self.lambda_adv
         feat_match_loss = feat_match_loss * self.lambda_feat_match
         g_loss = mel_loss + adv_loss + feat_match_loss
-        var_loss = (dur_loss + pitch_loss + energy_loss) * self.lambda_var
-        align_loss = (forwardsum_loss + bin_loss) * self.lambda_align
+        var_loss = (dur_loss * self.lambda_dur + pitch_loss + energy_loss) * self.lambda_var
 
-        loss = g_loss + var_loss + align_loss
+        loss = g_loss + var_loss
 
         stats = dict(
             generator_loss=loss.item(),
             generator_g_loss=g_loss.item(),
             generator_var_loss=var_loss.item(),
-            generator_align_loss=align_loss.item(),
             generator_g_mel_loss=mel_loss.item(),
             generator_g_adv_loss=adv_loss.item(),
             generator_g_feat_match_loss=feat_match_loss.item(),
             generator_var_dur_loss=dur_loss.item(),
             generator_var_pitch_loss=pitch_loss.item(),
             generator_var_energy_loss=energy_loss.item(),
-            generator_align_forwardsum_loss=forwardsum_loss.item(),
-            generator_align_bin_loss=bin_loss.item(),
         )
 
         loss, stats, weight = force_gatherable((loss, stats, batch_size), loss.device)
@@ -552,7 +549,7 @@ class JETSGW(AbsGANTTS):
             self._cache = outs
 
         # parse outputs
-        speech_hat_, _, _, start_idxs, *_ = outs
+        speech_hat_, start_idxs, *_ = outs
         speech_ = get_segments(
             x=speech,
             start_idxs=start_idxs * self.generator.upsample_factor,
@@ -591,6 +588,7 @@ class JETSGW(AbsGANTTS):
         feats: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
+        duration: Optional[torch.Tensor] = None,
         use_teacher_forcing: bool = False,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
@@ -643,14 +641,26 @@ class JETSGW(AbsGANTTS):
                 feats_lengths=feats_lengths,
                 pitch=pitch,
                 energy=energy,
+                duration=duration,
                 use_teacher_forcing=use_teacher_forcing,
                 **kwargs,
             )
         else:
+            assert feats is not None
+            feats = feats[None]
+            feats_lengths = torch.tensor(
+                [feats.size(1)],
+                dtype=torch.long,
+                device=feats.device,
+            )
             wav, dur = self.generator.inference(
                 text=text,
                 text_lengths=text_lengths,
-                feats=feats[None] if self.use_gst else None,
+                feats=feats,
+                feats_lengths=feats_lengths,
                 **kwargs,
             )
-        return dict(wav=wav.view(-1), duration=dur[0])
+            
+        map = gw.cubic_interpolation(torch.eye(dur.size(-1), device=dur.device).unsqueeze(0), dur.detach()).transpose(-1,-2)
+        map = map.detach().cpu()
+        return dict(wav=wav.view(-1), att_w=map[0])
