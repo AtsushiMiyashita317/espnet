@@ -707,6 +707,8 @@ class JETSGWGenerator(torch.nn.Module):
         spembs: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         use_teacher_forcing: bool = False,
+        *args,
+        **kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Run inference.
 
@@ -754,41 +756,15 @@ class JETSGWGenerator(torch.nn.Module):
         
         zs = gw.utils.interpolate(hs, text_lengths, feats_lengths, mode='nearest')
         hs = zs
-        dp_mu = hs.new_zeros((hs.size(0), hs.size(1), 0))
-        dp_ln_var = hs.new_zeros((hs.size(0), hs.size(1), 0))
-        dq_mu = hs.new_zeros((hs.size(0), hs.size(1), 0))
-        dq_ln_var = hs.new_zeros((hs.size(0), hs.size(1), 0))
         
         if use_teacher_forcing:
-            vs = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = vs.chunk(2, -1)  # (B, T_text, adim)
-            vs = mu1 + torch.randn_like(mu1)*ln_var1.mul(0.5).exp()
-            vs = self.duration_decoder.forward(vs, feat_masks)  # (B, T_text, n_iter)
-            mu2, ln_var2 = vs.chunk(2, -1)  # (B, T_text, n_iter)
-            vs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
-            
-            vs = torch.nn.functional.pad(vs, [0,0,1,0])[...,:-1,:]
-            vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
-            vs = vs - vs.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
-            vs = vs.cumsum(-2)
-            vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
-            
-            _ = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
             hs = self.alignment_encoder.forward(hs, feats, feat_masks) # (B, T_text, adim)
             mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
             hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
             
-            _ = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
-            mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
-            hs = self.alignment_encoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
+            hs = self.alignment_decoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
             mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
             ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
-            
-            dp_mu = torch.cat([dp_mu, mu1, mu3], dim=-1)
-            dq_mu = torch.cat([dq_mu, mu2, mu4], dim=-1)
-            dp_ln_var = torch.cat([dp_ln_var, ln_var1, ln_var3], dim=-1)
-            dq_ln_var = torch.cat([dq_ln_var, ln_var2, ln_var4], dim=-1)
             
             ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
             ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
@@ -796,7 +772,7 @@ class JETSGWGenerator(torch.nn.Module):
             ws = ws.cumsum(-2)
             ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
             
-            hs, func = self.length_regulator(zs, ws, vs, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
+            hs, func = self.length_regulator(zs, ws, ws, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
         
             p_outs = pitch
             e_outs = energy
@@ -807,9 +783,6 @@ class JETSGWGenerator(torch.nn.Module):
             hs = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
             mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
             ws = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
-            
-            dp_mu = torch.cat([dp_mu, mu1, mu2], dim=-1)
-            dp_ln_var = torch.cat([dp_ln_var, ln_var1, ln_var2], dim=-1)
             
             ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
             ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
