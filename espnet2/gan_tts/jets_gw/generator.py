@@ -649,32 +649,52 @@ class JETSGWGenerator(torch.nn.Module):
         ws = ws.cumsum(-2)
         ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         
-        hs, _ = self.length_regulator(zs, ws, vs, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)
+        hsq, _ = self.length_regulator(zs, ws, vs, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)
+        hsp, _ = self.length_regulator.forward(zs, vs, vs, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)
     
         dp = torch.cat([dp_mu, dp_ln_var], dim=-1)
         dq = torch.cat([dq_mu, dq_ln_var], dim=-1)
+        dq = torch.cat([dq, dp], dim=0)
+        dp = torch.cat([dp, dp], dim=0)
     
-
-        # forward duration predictor and variance predictors
-        if self.stop_gradient_from_pitch_predictor:
-            p_outs = self.pitch_predictor(hs.detach(), feat_masks)
-        else:
-            p_outs = self.pitch_predictor(hs, feat_masks)
-        if self.stop_gradient_from_energy_predictor:
-            e_outs = self.energy_predictor(hs.detach(), feat_masks)
-        else:
-            e_outs = self.energy_predictor(hs, feat_masks)
-
         # use groundtruth in training
         p_embs = self.pitch_embed(pitch.transpose(1, 2)).transpose(1, 2)
         e_embs = self.energy_embed(energy.transpose(1, 2)).transpose(1, 2)
-        hs = hs + e_embs + p_embs
+        
+        hsq = hsq + p_embs + e_embs
+        hsp = hsp + p_embs + e_embs
+        
+        hs = torch.cat([hsq, hsp], dim=0)
+
+        # forward duration predictor and variance predictors
+        if self.stop_gradient_from_pitch_predictor:
+            p_outsq = self.pitch_predictor(hsq.detach(), feat_masks)
+        else:
+            p_outsq = self.pitch_predictor(hsq, feat_masks)
+         # forward duration predictor and variance predictors
+        if self.stop_gradient_from_pitch_predictor:
+            p_outsp = self.pitch_predictor(hsp.detach(), feat_masks)
+        else:
+            p_outsp = self.pitch_predictor(hsp, feat_masks)
+        p_outs = torch.cat([p_outsq, p_outsp], dim=0)
+        
+        if self.stop_gradient_from_energy_predictor:
+            e_outsq = self.energy_predictor(hsq.detach(), feat_masks)
+        else:
+            e_outsq = self.energy_predictor(hsq, feat_masks)       
+        if self.stop_gradient_from_energy_predictor:
+            e_outsp = self.energy_predictor(hsp.detach(), feat_masks)
+        else:
+            e_outsp = self.energy_predictor(hsp, feat_masks)
+        e_outs = torch.cat([e_outsq, e_outsp], dim=0)   
 
         # forward decoder
         h_masks = self._source_mask(feats_lengths)
+        h_masks = torch.cat([h_masks, h_masks], dim=0)
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
 
         # get random segments
+        feats_lengths = torch.cat([feats_lengths, feats_lengths], dim=0)
         z_segments, z_start_idxs = get_random_segments(
             zs.transpose(1, 2),
             feats_lengths,

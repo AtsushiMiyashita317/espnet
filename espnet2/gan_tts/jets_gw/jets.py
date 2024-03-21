@@ -215,6 +215,7 @@ class JETSGW(AbsGANTTS):
         lambda_var: float = 1.0,
         lambda_dur: float = 1.0,
         lambda_align: float = 2.0,
+        lambda_vae: float = 1.0,
         cache_generator_outputs: bool = True,
     ):
         """Initialize JETS module.
@@ -278,6 +279,7 @@ class JETSGW(AbsGANTTS):
         self.lambda_var = lambda_var
         self.lambda_dur = lambda_dur
         self.lambda_align = lambda_align
+        self.lambda_vae = lambda_vae
 
         # cache
         self.cache_generator_outputs = cache_generator_outputs
@@ -427,54 +429,89 @@ class JETSGW(AbsGANTTS):
 
         # parse outputs
         (
-            speech_hat_,
-            start_idxs,
-            d_outs,
-            ds,
-            p_outs,
+            speech_hat_2,
+            start_idxs2,
+            d_outs2,
+            ds2,
+            p_outs2,
             ps,
-            e_outs,
+            e_outs2,
             es,
         ) = outs
-        speech_ = get_segments(
-            x=speech,
-            start_idxs=start_idxs * self.generator.upsample_factor,
+        speech2 = torch.cat([speech, speech], dim=0)
+        speech_2 = get_segments(
+            x=speech2,
+            start_idxs=start_idxs2 * self.generator.upsample_factor,
             segment_size=self.generator.segment_size * self.generator.upsample_factor,
         )
 
         # calculate discriminator outputs
-        p_hat = self.discriminator(speech_hat_)
+        p_hat2 = self.discriminator(speech_hat_2)
         with torch.no_grad():
             # do not store discriminator gradient in generator turn
-            p = self.discriminator(speech_)
+            p2 = self.discriminator(speech_2)
+        
+        loss2 = [None, None]
+        stats2 = [None, None]
+        p2 = tuple(zip(*[tuple(zip(*[torch.chunk(o, 2) for o in l])) for l in p2])) if type(p2[0]) is list else tuple(zip(*[torch.chunk(o, 2) for o in p2]))
+        p_hat2 = tuple(zip(*[tuple(zip(*[torch.chunk(o, 2) for o in l])) for l in p_hat2])) if type(p_hat2[0]) is list else tuple(zip(*[torch.chunk(o, 2) for o in p_hat2]))
+        for (
+            idx,
+            speech_,
+            speech_hat_,
+            p,
+            p_hat,
+            d_outs,
+            ds,
+            p_outs,
+            e_outs,
+        ) in zip(
+            [0, 1],
+            torch.chunk(speech_2, 2),
+            torch.chunk(speech_hat_2, 2),
+            p2,
+            p_hat2,
+            torch.chunk(d_outs2, 2),
+            torch.chunk(ds2, 2),
+            torch.chunk(p_outs2, 2),
+            torch.chunk(e_outs2, 2),
+        ):
+            # calculate losses
+            mel_loss = self.mel_loss(speech_hat_, speech_)
+            adv_loss = self.generator_adv_loss(p_hat)
+            feat_match_loss = self.feat_match_loss(p_hat, p)
+            dur_loss, pitch_loss, energy_loss = self.var_loss(
+                d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
+            )
 
-        # calculate losses
-        mel_loss = self.mel_loss(speech_hat_, speech_)
-        adv_loss = self.generator_adv_loss(p_hat)
-        feat_match_loss = self.feat_match_loss(p_hat, p)
-        dur_loss, pitch_loss, energy_loss = self.var_loss(
-            d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
-        )
+            mel_loss = mel_loss * self.lambda_mel
+            adv_loss = adv_loss * self.lambda_adv
+            feat_match_loss = feat_match_loss * self.lambda_feat_match
+            g_loss = mel_loss + adv_loss + feat_match_loss
+            var_loss = (dur_loss * self.lambda_dur + pitch_loss + energy_loss) * self.lambda_var
 
-        mel_loss = mel_loss * self.lambda_mel
-        adv_loss = adv_loss * self.lambda_adv
-        feat_match_loss = feat_match_loss * self.lambda_feat_match
-        g_loss = mel_loss + adv_loss + feat_match_loss
-        var_loss = (dur_loss * self.lambda_dur + pitch_loss + energy_loss) * self.lambda_var
+            loss2[idx] = g_loss + var_loss
 
-        loss = g_loss + var_loss
-
-        stats = dict(
-            generator_loss=loss.item(),
-            generator_g_loss=g_loss.item(),
-            generator_var_loss=var_loss.item(),
-            generator_g_mel_loss=mel_loss.item(),
-            generator_g_adv_loss=adv_loss.item(),
-            generator_g_feat_match_loss=feat_match_loss.item(),
-            generator_var_dur_loss=dur_loss.item(),
-            generator_var_pitch_loss=pitch_loss.item(),
-            generator_var_energy_loss=energy_loss.item(),
-        )
+            stats2[idx] = dict(
+                generator_loss=loss2[idx].item(),
+                generator_g_loss=g_loss.item(),
+                generator_var_loss=var_loss.item(),
+                generator_g_mel_loss=mel_loss.item(),
+                generator_g_adv_loss=adv_loss.item(),
+                generator_g_feat_match_loss=feat_match_loss.item(),
+                generator_var_dur_loss=dur_loss.item(),
+                generator_var_pitch_loss=pitch_loss.item(),
+                generator_var_energy_loss=energy_loss.item(),
+            )
+            
+        keys = list(stats2[1].keys())
+        for key in keys:
+            x = stats2[1].pop(key)
+            stats2[1][key+'_gsnn'] = x
+        stats = stats2[0]
+        stats.update(**stats2[1])
+        
+        loss = self.lambda_vae*loss2[0] + (1-self.lambda_vae)*loss2[1]
 
         loss, stats, weight = force_gatherable((loss, stats, batch_size), loss.device)
 
@@ -549,25 +586,35 @@ class JETSGW(AbsGANTTS):
             self._cache = outs
 
         # parse outputs
-        speech_hat_, start_idxs, *_ = outs
-        speech_ = get_segments(
-            x=speech,
-            start_idxs=start_idxs * self.generator.upsample_factor,
+        speech_hat_2, start_idxs2, *_ = outs
+        speech2 = torch.cat([speech, speech], dim=0)
+        speech_2 = get_segments(
+            x=speech2,
+            start_idxs=start_idxs2 * self.generator.upsample_factor,
             segment_size=self.generator.segment_size * self.generator.upsample_factor,
         )
 
         # calculate discriminator outputs
-        p_hat = self.discriminator(speech_hat_.detach())
-        p = self.discriminator(speech_)
+        p_hat2 = self.discriminator(speech_hat_2.detach())
+        p2 = self.discriminator(speech_2)
+        
+        p_hat, p_hat_gsnn = tuple(zip(*[tuple(zip(*[torch.chunk(o, 2) for o in l])) for l in p_hat2])) if type(p_hat2[0]) is list else tuple(zip(*[torch.chunk(o, 2) for o in p_hat2]))
+        p, p_gsnn = tuple(zip(*[tuple(zip(*[torch.chunk(o, 2) for o in l])) for l in p2])) if type(p2[0]) is list else tuple(zip(*[torch.chunk(o, 2) for o in p2]))
 
         # calculate losses
-        real_loss, fake_loss = self.discriminator_adv_loss(p_hat, p)
-        loss = real_loss + fake_loss
+        real_loss_vae, fake_loss_vae = self.discriminator_adv_loss(p_hat, p)
+        loss_vae = real_loss_vae + fake_loss_vae
+        real_loss_gsnn, fake_loss_gsnn = self.discriminator_adv_loss(p_hat_gsnn, p_gsnn)
+        loss_gsnn = real_loss_gsnn + fake_loss_gsnn
+        loss = self.lambda_vae*loss_vae + (1-self.lambda_vae)*loss_gsnn
 
         stats = dict(
-            discriminator_loss=loss.item(),
-            discriminator_real_loss=real_loss.item(),
-            discriminator_fake_loss=fake_loss.item(),
+            discriminator_loss=loss_vae.item(),
+            discriminator_real_loss=real_loss_vae.item(),
+            discriminator_fake_loss=fake_loss_vae.item(),
+            discriminator_loss_gsnn=loss_gsnn.item(),
+            discriminator_real_loss_gsnn=real_loss_gsnn.item(),
+            discriminator_fake_loss_gsnn=fake_loss_gsnn.item(),
         )
         loss, stats, weight = force_gatherable((loss, stats, batch_size), loss.device)
 
