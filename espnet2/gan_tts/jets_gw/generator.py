@@ -656,38 +656,28 @@ class JETSGWGenerator(torch.nn.Module):
         dq = torch.cat([dq_mu, dq_ln_var], dim=-1)
         dq = torch.cat([dq, dp], dim=0)
         dp = torch.cat([dp, dp], dim=0)
-    
-        # use groundtruth in training
-        p_embs = self.pitch_embed(pitch.transpose(1, 2)).transpose(1, 2)
-        e_embs = self.energy_embed(energy.transpose(1, 2)).transpose(1, 2)
-        
-        hsq = hsq + p_embs + e_embs
-        hsp = hsp + p_embs + e_embs
         
         hs = torch.cat([hsq, hsp], dim=0)
+        feat_masks = torch.cat([feat_masks, feat_masks], dim=0)
 
         # forward duration predictor and variance predictors
         if self.stop_gradient_from_pitch_predictor:
-            p_outsq = self.pitch_predictor(hsq.detach(), feat_masks)
+            p_outs = self.pitch_predictor(hs.detach(), feat_masks)
         else:
-            p_outsq = self.pitch_predictor(hsq, feat_masks)
-         # forward duration predictor and variance predictors
-        if self.stop_gradient_from_pitch_predictor:
-            p_outsp = self.pitch_predictor(hsp.detach(), feat_masks)
+            p_outs = self.pitch_predictor(hs, feat_masks)
+        if self.stop_gradient_from_energy_predictor:
+            e_outs = self.energy_predictor(hs.detach(), feat_masks)
         else:
-            p_outsp = self.pitch_predictor(hsp, feat_masks)
-        p_outs = torch.cat([p_outsq, p_outsp], dim=0)
+            e_outs = self.energy_predictor(hs, feat_masks)       
         
-        if self.stop_gradient_from_energy_predictor:
-            e_outsq = self.energy_predictor(hsq.detach(), feat_masks)
-        else:
-            e_outsq = self.energy_predictor(hsq, feat_masks)       
-        if self.stop_gradient_from_energy_predictor:
-            e_outsp = self.energy_predictor(hsp.detach(), feat_masks)
-        else:
-            e_outsp = self.energy_predictor(hsp, feat_masks)
-        e_outs = torch.cat([e_outsq, e_outsp], dim=0)   
-
+        # use groundtruth in training
+        p_embs = self.pitch_embed(pitch.transpose(1, 2)).transpose(1, 2)
+        p_embs = torch.cat([p_embs, p_embs], dim=0)
+        e_embs = self.energy_embed(energy.transpose(1, 2)).transpose(1, 2)
+        e_embs = torch.cat([e_embs, e_embs], dim=0)
+        
+        hs = hs + p_embs + e_embs
+        
         # forward decoder
         h_masks = self._source_mask(feats_lengths)
         h_masks = torch.cat([h_masks, h_masks], dim=0)
