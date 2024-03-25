@@ -771,7 +771,7 @@ class JETSGWGenerator(torch.nn.Module):
             mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
             hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
             
-            hs = self.alignment_decoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
+            hs = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
             mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
             ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
             
