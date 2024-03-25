@@ -403,16 +403,16 @@ class JETSGWGenerator(torch.nn.Module):
             use_resblock=duration_predictor_use_resblock 
         )
             
-        self.alignment_decoder = AlignmentModule(
-            tdim=adim,
-            fdim=odim,
-            odim=duration_predictor_iter*2,
-            n_layers=duration_predictor_layers,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0,
-            use_resblock=duration_predictor_use_resblock 
-        )
+        # self.alignment_decoder = AlignmentModule(
+        #     tdim=adim,
+        #     fdim=odim,
+        #     odim=duration_predictor_iter*2,
+        #     n_layers=duration_predictor_layers,
+        #     n_chans=duration_predictor_chans,
+        #     kernel_size=duration_predictor_kernel_size,
+        #     dropout_rate=0.0,
+        #     use_resblock=duration_predictor_use_resblock 
+        # )
 
 
         # define pitch predictor
@@ -632,9 +632,8 @@ class JETSGWGenerator(torch.nn.Module):
         mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
         hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
         
-        _ = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
-        mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
-        hs = self.alignment_decoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
+        hs = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
+        mu3, ln_var3 = hs.chunk(2, -1)  # (B, T_text, n_iter)
         mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
         ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
         
