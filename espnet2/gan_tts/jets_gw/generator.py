@@ -76,6 +76,9 @@ class JETSGWGenerator(torch.nn.Module):
         duration_predictor_dropout_rate: float = 0.1,
         duration_predictor_iter: int = 16,
         duration_predictor_use_resblock: bool = False,
+        stop_gradient_from_duration_predictor: bool = False,
+        stop_gradient_from_alignment_module: bool = False,
+        stop_gradient_from_kl_divergence: bool = False,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -253,6 +256,9 @@ class JETSGWGenerator(torch.nn.Module):
         self.decoder_type = decoder_type
         self.stop_gradient_from_pitch_predictor = stop_gradient_from_pitch_predictor
         self.stop_gradient_from_energy_predictor = stop_gradient_from_energy_predictor
+        self.stop_gradient_from_duration_predictor = stop_gradient_from_duration_predictor
+        self.stop_gradient_from_alignment_module = stop_gradient_from_alignment_module
+        self.stop_gradient_from_kl_divergence = stop_gradient_from_kl_divergence
         self.use_scaled_pos_enc = use_scaled_pos_enc
         self.use_gst = use_gst
 
@@ -626,9 +632,9 @@ class JETSGWGenerator(torch.nn.Module):
         vs = vs.cumsum(-2)
         vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         
-        _ = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
+        _ = self.duration_encoder.forward(hs.detach() if self.stop_gradient_from_duration_predictor else hs, feat_masks) # (B, T_text, adim)
         mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
-        hs = self.alignment_encoder.forward(hs, feats, feat_masks) # (B, T_text, adim)
+        hs = self.alignment_encoder.forward(hs.detach() if self.stop_gradient_from_alignment_module else hs, feats, feat_masks) # (B, T_text, adim)
         mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
         hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
         
@@ -653,8 +659,10 @@ class JETSGWGenerator(torch.nn.Module):
     
         dp = torch.cat([dp_mu, dp_ln_var], dim=-1)
         dq = torch.cat([dq_mu, dq_ln_var], dim=-1)
+        
+        if self.stop_gradient_from_kl_divergence:
+            dq = dq.detach()
     
-
         # forward duration predictor and variance predictors
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), feat_masks)
