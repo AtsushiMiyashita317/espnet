@@ -144,6 +144,7 @@ tts_conf:
     lambda_var: 1.0
     lambda_dur: 1.0
     lambda_align: 2.0
+    lambda_vae: 1.0
     # others
     sampling_rate: 22050                 # needed in the inference for saving wav
     cache_generator_outputs: true        # whether to cache generator outputs in the training
