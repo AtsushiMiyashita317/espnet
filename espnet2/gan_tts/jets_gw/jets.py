@@ -97,6 +97,13 @@ class JETSGW(AbsGANTTS):
             "duration_predictor_dropout_rate": 0.1,
             "duration_predictor_iter": 16,
             "duration_predictor_use_resblock": False,
+            "flow_flows": 4,
+            "flow_kernel_size": 5,
+            "flow_base_dilation": 1,
+            "flow_layers": 4,
+            "flow_dropout_rate": 0.0,
+            "use_weight_norm_in_flow": True,
+            "use_only_mean_in_flow": True,
             "energy_predictor_layers": 2,
             "energy_predictor_chans": 384,
             "energy_predictor_kernel_size": 3,
@@ -429,12 +436,11 @@ class JETSGW(AbsGANTTS):
         (
             speech_hat_,
             start_idxs,
-            d_outs,
-            ds,
             p_outs,
             ps,
             e_outs,
             es,
+            latents
         ) = outs
         speech_ = get_segments(
             x=speech,
@@ -453,7 +459,7 @@ class JETSGW(AbsGANTTS):
         adv_loss = self.generator_adv_loss(p_hat)
         feat_match_loss = self.feat_match_loss(p_hat, p)
         dur_loss, pitch_loss, energy_loss = self.var_loss(
-            d_outs, ds, p_outs, ps, e_outs, es, feats_lengths
+            p_outs, ps, e_outs, es, feats_lengths, latents
         )
 
         mel_loss = mel_loss * self.lambda_mel

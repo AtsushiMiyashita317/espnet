@@ -13,6 +13,7 @@ import gw
 
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
 from espnet2.gan_tts.hifigan import HiFiGANGenerator
+from espnet2.gan_tts.vits.residual_coupling import ResidualAffineCouplingBlock
 
 from espnet2.gan_tts.utils import get_random_segments
 from espnet2.torch_utils.initialize import initialize
@@ -76,6 +77,13 @@ class JETSGWGenerator(torch.nn.Module):
         duration_predictor_dropout_rate: float = 0.1,
         duration_predictor_iter: int = 16,
         duration_predictor_use_resblock: bool = False,
+        flow_flows: int = 4,
+        flow_kernel_size: int = 5,
+        flow_base_dilation: int = 1,
+        flow_layers: int = 4,
+        flow_dropout_rate: float = 0.0,
+        use_weight_norm_in_flow: bool = True,
+        use_only_mean_in_flow: bool = True,
         # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
@@ -372,38 +380,17 @@ class JETSGWGenerator(torch.nn.Module):
                 self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
        # define duration predictor
-        self.duration_encoder = VariancePredictor(
-            idim=adim,
-            odim=adim*2,
-            n_layers=duration_predictor_layers*2,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0,
-            use_resblock=duration_predictor_use_resblock 
-        )
-            
-        self.duration_decoder = VariancePredictor(
+        self.duration_predictor = VariancePredictor(
             idim=adim,
             odim=duration_predictor_iter*2,
-            n_layers=duration_predictor_layers*2,
-            n_chans=duration_predictor_chans,
-            kernel_size=duration_predictor_kernel_size,
-            dropout_rate=0.0,
-            use_resblock=duration_predictor_use_resblock 
-        )
-    
-        self.alignment_encoder = AlignmentModule(
-            tdim=adim,
-            fdim=odim,
-            odim=adim*2,
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             kernel_size=duration_predictor_kernel_size,
             dropout_rate=0.0,
             use_resblock=duration_predictor_use_resblock 
         )
-            
-        self.alignment_decoder = AlignmentModule(
+    
+        self.alignment_module = AlignmentModule(
             tdim=adim,
             fdim=odim,
             odim=duration_predictor_iter*2,
@@ -414,6 +401,17 @@ class JETSGWGenerator(torch.nn.Module):
             use_resblock=duration_predictor_use_resblock 
         )
 
+        self.flow = ResidualAffineCouplingBlock(
+            in_channels=duration_predictor_iter,
+            hidden_channels=duration_predictor_iter,
+            flows=flow_flows,
+            kernel_size=flow_kernel_size,
+            base_dilation=flow_base_dilation,
+            layers=flow_layers,
+            dropout_rate=flow_dropout_rate,
+            use_weight_norm=use_weight_norm_in_flow,
+            use_only_mean=use_only_mean_in_flow,
+        )
 
         # define pitch predictor
         self.pitch_predictor = VariancePredictor(
@@ -609,51 +607,35 @@ class JETSGWGenerator(torch.nn.Module):
 
         # forward duration predictor and variance predictors
         feat_masks = make_pad_mask(feats_lengths).to(text.device)
+        flow_masks = make_non_pad_mask(feats_lengths).to(text.device)
         
         zs = gw.utils.interpolate(hs, text_lengths, feats_lengths, mode='nearest')
         hs = zs
         
-        vs = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
-        mu1, ln_var1 = vs.chunk(2, -1)  # (B, T_text, adim)
-        vs = mu1 + torch.randn_like(mu1)*ln_var1.mul(0.5).exp()
-        vs = self.duration_decoder.forward(vs, feat_masks)  # (B, T_text, n_iter)
-        mu2, ln_var2 = vs.chunk(2, -1)  # (B, T_text, n_iter)
-        vs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
+        p = self.duration_predictor.forward(hs, feat_masks) # (B, T_text, adim)
+        mu_p, ln_var_p = p.chunk(2, -1)  # (B, T_text, adim)
+        vs_p = mu_p + torch.randn_like(mu_p)*ln_var_p.mul(0.5).exp()
         
-        vs = torch.nn.functional.pad(vs, [0,0,1,0])[...,:-1,:]
-        vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
-        vs = vs - vs.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
-        vs = vs.cumsum(-2)
-        vs = vs.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+        q = self.alignment_module.forward(hs, feats, feat_masks) # (B, T_text, adim)
+        mu_q, ln_var_q = q.chunk(2, -1)  # (B, T_text, adim)
+        ws_q = mu_q + torch.randn_like(mu_q)*ln_var_q.mul(0.5).exp()
+
+        vs_q = self.flow.forward(ws_q.transpose(-1,-2), flow_masks.unsqueeze(-2)).transpose(-1,-2)
+        ws_p = self.flow.forward(vs_p.transpose(-1,-2), flow_masks.unsqueeze(-2), inverse=True).transpose(-1,-2)
         
-        _ = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
-        mu1, ln_var1 = _.chunk(2, -1)  # (B, T_text, adim)
-        hs = self.alignment_encoder.forward(hs, feats, feat_masks) # (B, T_text, adim)
-        mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-        hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
-        
-        _ = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
-        mu3, ln_var3 = _.chunk(2, -1)  # (B, T_text, n_iter)
-        hs = self.alignment_decoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
-        mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-        ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
-        
-        dp_mu = torch.cat([mu1, mu3], dim=-1)
-        dq_mu = torch.cat([mu2, mu4], dim=-1)
-        dp_ln_var = torch.cat([ln_var1, ln_var3], dim=-1)
-        dq_ln_var = torch.cat([ln_var2, ln_var4], dim=-1)
-        
-        ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+        ws = torch.nn.functional.pad(ws_q, [0,0,1,0])[...,:-1,:]
         ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         ws = ws - ws.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
         ws = ws.cumsum(-2)
+        ws_q = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+
+        ws = torch.nn.functional.pad(ws_p, [0,0,1,0])[...,:-1,:]
         ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+        ws = ws - ws.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
+        ws = ws.cumsum(-2)
+        ws_p = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
         
-        hs, _ = self.length_regulator(zs, ws, vs, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)
-    
-        dp = torch.cat([dp_mu, dp_ln_var], dim=-1)
-        dq = torch.cat([dq_mu, dq_ln_var], dim=-1)
-    
+        hs, _ = self.length_regulator(zs, ws_q, ws_p, durations, text_lengths, feats_lengths)  # (B, T_feats, adim)
 
         # forward duration predictor and variance predictors
         if self.stop_gradient_from_pitch_predictor:
@@ -686,12 +668,11 @@ class JETSGWGenerator(torch.nn.Module):
         return (
             wav,
             z_start_idxs,
-            dp,
-            dq,
             p_outs,
             pitch,
             e_outs,
             energy,
+            (vs_q, mu_q, ln_var_q, mu_p, ln_var_p)
         )
 
     def inference(
@@ -758,39 +739,34 @@ class JETSGWGenerator(torch.nn.Module):
         hs = zs
         
         if use_teacher_forcing:
-            hs = self.alignment_encoder.forward(hs, feats, feat_masks) # (B, T_text, adim)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
-            
-            hs = self.alignment_decoder.forward(hs, feats, feat_masks)  # (B, T_text, n_iter)
-            mu4, ln_var4 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            ws = mu4 + torch.randn_like(mu4)*ln_var4.mul(0.5).exp()
-            
-            ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+            q = self.alignment_module.forward(hs, feats, feat_masks) # (B, T_text, adim)
+            mu_q, ln_var_q = q.chunk(2, -1)  # (B, T_text, adim)
+            ws_q = mu_q + torch.randn_like(mu_q)*ln_var_q.mul(0.5).exp()
+
+            ws = torch.nn.functional.pad(ws_q, [0,0,1,0])[...,:-1,:]
             ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
             ws = ws - ws.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
             ws = ws.cumsum(-2)
-            ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+            ws_q = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
             
-            hs, func = self.length_regulator(zs, ws, ws, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
+            hs, func = self.length_regulator(zs, ws_q, ws_q, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
         
             p_outs = pitch
             e_outs = energy
         else:   
-            hs = self.duration_encoder.forward(hs, feat_masks) # (B, T_text, adim)
-            mu1, ln_var1 = hs.chunk(2, -1)  # (B, T_text, adim)
-            hs = mu1 + torch.randn_like(mu1)*ln_var1.mul(0.5).exp()
-            hs = self.duration_decoder.forward(hs, feat_masks)  # (B, T_text, n_iter)
-            mu2, ln_var2 = hs.chunk(2, -1)  # (B, T_text, n_iter)
-            ws = mu2 + torch.randn_like(mu2)*ln_var2.mul(0.5).exp()
+            p = self.duration_predictor.forward(hs, feat_masks) # (B, T_text, adim)
+            mu_p, ln_var_p = p.chunk(2, -1)  # (B, T_text, adim)
+            vs_p = mu_p + torch.randn_like(mu_p)*ln_var_p.mul(0.5).exp()
             
-            ws = torch.nn.functional.pad(ws, [0,0,1,0])[...,:-1,:]
+            ws_p = self.flow.forward(vs_p.transpose(-1,-2), feat_masks.unsqueeze(-2), inverse=True).transpose(-1,-2)
+
+            ws = torch.nn.functional.pad(ws_p, [0,0,1,0])[...,:-1,:]
             ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
             ws = ws - ws.sum(-2, keepdim=True)/feats_lengths.unsqueeze(-1).unsqueeze(-1)
             ws = ws.cumsum(-2)
-            ws = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
+            ws_p = ws.masked_fill(feat_masks.unsqueeze(-1), 0.0)
             
-            hs, func = self.length_regulator.forward(zs, ws, ws, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
+            hs, func = self.length_regulator.forward(zs, ws_p, ws_p, duration, text_lengths, feats_lengths)  # (B, T_feats, adim)
             
             p_outs = self.pitch_predictor(hs, feat_masks)
             e_outs = self.energy_predictor(hs, feat_masks)

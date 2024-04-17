@@ -122,7 +122,7 @@ def calculate_all_attentions(
                 m = torch.eye(ds.size(-1), device=fp.device).unsqueeze(0)
                 mp = gw.cubic_interpolation(m, fp.detach()).transpose(-1,-2).detach().cpu()
                 mq = gw.cubic_interpolation(m, fq.detach()).transpose(-1,-2).detach().cpu()
-                mfa = gw.cubic_interpolation(m, f.to(device=m.device)).transpose(-1,-2).detach().cpu()
+                mfa = gw.cubic_interpolation(m, f.to(device=m.device, dtype=m.dtype)).transpose(-1,-2).detach().cpu()
                 outputs[name] = [mp, mq, mfa]
                     
         handle = modu.register_forward_hook(hook)
