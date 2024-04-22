@@ -14,9 +14,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from espnet2.gan_tts.wavenet import WaveNet
 from espnet2.gan_tts.hifigan import HiFiGANGenerator
 from espnet2.gan_tts.utils import get_random_segments
 from espnet2.gan_tts.vits.duration_predictor import StochasticDurationPredictor
+from espnet2.gan_tts.vits.warping_predictor import WarpingPredictor
+from espnet2.gan_tts.vits.length_regulator import LengthRegulator
+from espnet2.gan_tts.vits.length_regulator import LengthRegulator as LR
 from espnet2.gan_tts.vits.posterior_encoder import PosteriorEncoder
 from espnet2.gan_tts.vits.residual_coupling import ResidualAffineCouplingBlock
 from espnet2.gan_tts.vits.text_encoder import TextEncoder
@@ -572,3 +576,499 @@ class VITSGenerator(torch.nn.Module):
         #   [1., 1., 1., 1., 1.]]]       [0., 0., 0., 0., 1.]]]
         path = path - F.pad(path, [0, 0, 1, 0, 0, 0])[:, :-1]
         return path.unsqueeze(1).transpose(2, 3) * mask
+
+
+class VITSGWGenerator(torch.nn.Module):
+    """Generator module in VITS.
+
+    This is a module of VITS described in `Conditional Variational Autoencoder
+    with Adversarial Learning for End-to-End Text-to-Speech`_.
+
+    As text encoder, we use conformer architecture instead of the relative positional
+    Transformer, which contains additional convolution layers.
+
+    .. _`Conditional Variational Autoencoder with Adversarial Learning for End-to-End
+        Text-to-Speech`: https://arxiv.org/abs/2006.04558
+
+    """
+
+    def __init__(
+        self,
+        vocabs: int,
+        aux_channels: int = 513,
+        hidden_channels: int = 192,
+        spks: Optional[int] = None,
+        langs: Optional[int] = None,
+        spk_embed_dim: Optional[int] = None,
+        global_channels: int = -1,
+        segment_size: int = 32,
+        text_encoder_attention_heads: int = 2,
+        text_encoder_ffn_expand: int = 4,
+        text_encoder_blocks: int = 6,
+        text_encoder_positionwise_layer_type: str = "conv1d",
+        text_encoder_positionwise_conv_kernel_size: int = 1,
+        text_encoder_positional_encoding_layer_type: str = "rel_pos",
+        text_encoder_self_attention_layer_type: str = "rel_selfattn",
+        text_encoder_activation_type: str = "swish",
+        text_encoder_normalize_before: bool = True,
+        text_encoder_dropout_rate: float = 0.1,
+        text_encoder_positional_dropout_rate: float = 0.0,
+        text_encoder_attention_dropout_rate: float = 0.0,
+        text_encoder_conformer_kernel_size: int = 7,
+        use_macaron_style_in_text_encoder: bool = True,
+        use_conformer_conv_in_text_encoder: bool = True,
+        decoder_kernel_size: int = 7,
+        decoder_channels: int = 512,
+        decoder_upsample_scales: List[int] = [8, 8, 2, 2],
+        decoder_upsample_kernel_sizes: List[int] = [16, 16, 4, 4],
+        decoder_resblock_kernel_sizes: List[int] = [3, 7, 11],
+        decoder_resblock_dilations: List[List[int]] = [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+        feats_encoder_layers: int = 16,
+        use_weight_norm_in_decoder: bool = True,
+        posterior_encoder_kernel_size: int = 5,
+        posterior_encoder_layers: int = 3,
+        posterior_encoder_stacks: int = 1,
+        posterior_encoder_base_dilation: int = 1,
+        posterior_encoder_dropout_rate: float = 0.0,
+        use_weight_norm_in_posterior_encoder: bool = True,
+        prior_encoder_kernel_size: int = 5,
+        prior_encoder_layers: int = 3,
+        prior_encoder_stacks: int = 1,
+        prior_encoder_base_dilation: int = 1,
+        prior_encoder_dropout_rate: float = 0.0,
+        use_weight_norm_in_prior_encoder: bool = True,
+        warping_predictor_kernel_size: int = 5,
+        warping_predictor_layers: int = 3,
+        warping_predictor_stacks: int = 1,
+        warping_predictor_base_dilation: int = 1,
+        warping_predictor_dropout_rate: float = 0.0,
+        use_weight_norm_in_warping_predictor: bool = True,
+        flow_flows: int = 4,
+        flow_kernel_size: int = 5,
+        flow_base_dilation: int = 1,
+        flow_layers: int = 4,
+        flow_dropout_rate: float = 0.0,
+        use_weight_norm_in_flow: bool = True,
+        use_only_mean_in_flow: bool = True,
+        length_regulator_iter: int = 16,
+    ):
+        """Initialize VITS generator module.
+
+        Args:
+            vocabs (int): Input vocabulary size.
+            aux_channels (int): Number of acoustic feature channels.
+            hidden_channels (int): Number of hidden channels.
+            spks (Optional[int]): Number of speakers. If set to > 1, assume that the
+                sids will be provided as the input and use sid embedding layer.
+            langs (Optional[int]): Number of languages. If set to > 1, assume that the
+                lids will be provided as the input and use sid embedding layer.
+            spk_embed_dim (Optional[int]): Speaker embedding dimension. If set to > 0,
+                assume that spembs will be provided as the input.
+            global_channels (int): Number of global conditioning channels.
+            segment_size (int): Segment size for decoder.
+            text_encoder_attention_heads (int): Number of heads in conformer block
+                of text encoder.
+            text_encoder_ffn_expand (int): Expansion ratio of FFN in conformer block
+                of text encoder.
+            text_encoder_blocks (int): Number of conformer blocks in text encoder.
+            text_encoder_positionwise_layer_type (str): Position-wise layer type in
+                conformer block of text encoder.
+            text_encoder_positionwise_conv_kernel_size (int): Position-wise convolution
+                kernel size in conformer block of text encoder. Only used when the
+                above layer type is conv1d or conv1d-linear.
+            text_encoder_positional_encoding_layer_type (str): Positional encoding layer
+                type in conformer block of text encoder.
+            text_encoder_self_attention_layer_type (str): Self-attention layer type in
+                conformer block of text encoder.
+            text_encoder_activation_type (str): Activation function type in conformer
+                block of text encoder.
+            text_encoder_normalize_before (bool): Whether to apply layer norm before
+                self-attention in conformer block of text encoder.
+            text_encoder_dropout_rate (float): Dropout rate in conformer block of
+                text encoder.
+            text_encoder_positional_dropout_rate (float): Dropout rate for positional
+                encoding in conformer block of text encoder.
+            text_encoder_attention_dropout_rate (float): Dropout rate for attention in
+                conformer block of text encoder.
+            text_encoder_conformer_kernel_size (int): Conformer conv kernel size. It
+                will be used when only use_conformer_conv_in_text_encoder = True.
+            use_macaron_style_in_text_encoder (bool): Whether to use macaron style FFN
+                in conformer block of text encoder.
+            use_conformer_conv_in_text_encoder (bool): Whether to use covolution in
+                conformer block of text encoder.
+            decoder_kernel_size (int): Decoder kernel size.
+            decoder_channels (int): Number of decoder initial channels.
+            decoder_upsample_scales (List[int]): List of upsampling scales in decoder.
+            decoder_upsample_kernel_sizes (List[int]): List of kernel size for
+                upsampling layers in decoder.
+            decoder_resblock_kernel_sizes (List[int]): List of kernel size for resblocks
+                in decoder.
+            decoder_resblock_dilations (List[List[int]]): List of list of dilations for
+                resblocks in decoder.
+            use_weight_norm_in_decoder (bool): Whether to apply weight normalization in
+                decoder.
+            posterior_encoder_kernel_size (int): Posterior encoder kernel size.
+            posterior_encoder_layers (int): Number of layers of posterior encoder.
+            posterior_encoder_stacks (int): Number of stacks of posterior encoder.
+            posterior_encoder_base_dilation (int): Base dilation of posterior encoder.
+            posterior_encoder_dropout_rate (float): Dropout rate for posterior encoder.
+            use_weight_norm_in_posterior_encoder (bool): Whether to apply weight
+                normalization in posterior encoder.
+            flow_flows (int): Number of flows in flow.
+            flow_kernel_size (int): Kernel size in flow.
+            flow_base_dilation (int): Base dilation in flow.
+            flow_layers (int): Number of layers in flow.
+            flow_dropout_rate (float): Dropout rate in flow
+            use_weight_norm_in_flow (bool): Whether to apply weight normalization in
+                flow.
+            use_only_mean_in_flow (bool): Whether to use only mean in flow.
+            stochastic_duration_predictor_kernel_size (int): Kernel size in stochastic
+                duration predictor.
+            stochastic_duration_predictor_dropout_rate (float): Dropout rate in
+                stochastic duration predictor.
+            stochastic_duration_predictor_flows (int): Number of flows in stochastic
+                duration predictor.
+            stochastic_duration_predictor_dds_conv_layers (int): Number of DDS conv
+                layers in stochastic duration predictor.
+
+        """
+        super().__init__()
+        self.segment_size = segment_size
+        self.hiden_chunnels = hidden_channels
+        self.text_encoder = TextEncoder(
+            vocabs=vocabs,
+            attention_dim=hidden_channels,
+            attention_heads=text_encoder_attention_heads,
+            linear_units=hidden_channels * text_encoder_ffn_expand,
+            blocks=text_encoder_blocks,
+            positionwise_layer_type=text_encoder_positionwise_layer_type,
+            positionwise_conv_kernel_size=text_encoder_positionwise_conv_kernel_size,
+            positional_encoding_layer_type=text_encoder_positional_encoding_layer_type,
+            self_attention_layer_type=text_encoder_self_attention_layer_type,
+            activation_type=text_encoder_activation_type,
+            normalize_before=text_encoder_normalize_before,
+            dropout_rate=text_encoder_dropout_rate,
+            positional_dropout_rate=text_encoder_positional_dropout_rate,
+            attention_dropout_rate=text_encoder_attention_dropout_rate,
+            conformer_kernel_size=text_encoder_conformer_kernel_size,
+            use_macaron_style=use_macaron_style_in_text_encoder,
+            use_conformer_conv=use_conformer_conv_in_text_encoder,
+        )
+        self.decoder = HiFiGANGenerator(
+            in_channels=hidden_channels,
+            out_channels=1,
+            channels=decoder_channels,
+            global_channels=global_channels,
+            kernel_size=decoder_kernel_size,
+            upsample_scales=decoder_upsample_scales,
+            upsample_kernel_sizes=decoder_upsample_kernel_sizes,
+            resblock_kernel_sizes=decoder_resblock_kernel_sizes,
+            resblock_dilations=decoder_resblock_dilations,
+            use_weight_norm=use_weight_norm_in_decoder,
+        )
+        self.feats_encoder = WaveNet(
+            in_channels=aux_channels,
+            out_channels=hidden_channels,
+            kernel_size=posterior_encoder_kernel_size,
+            layers=feats_encoder_layers,
+            stacks=posterior_encoder_stacks,
+            base_dilation=posterior_encoder_base_dilation,
+            residual_channels=hidden_channels,
+            aux_channels=-1,
+            gate_channels=hidden_channels * 2,
+            skip_channels=hidden_channels,
+            global_channels=global_channels,
+            dropout_rate=posterior_encoder_dropout_rate,
+            bias=True,
+            use_weight_norm=use_weight_norm_in_posterior_encoder,
+            use_first_conv=True,
+            use_last_conv=False,
+            scale_residual=False,
+            scale_skip_connect=True,
+        )
+        self.posterior_encoder = PosteriorEncoder(
+            in_channels=hidden_channels,
+            out_channels=hidden_channels,
+            hidden_channels=hidden_channels,
+            kernel_size=posterior_encoder_kernel_size,
+            layers=posterior_encoder_layers,
+            stacks=posterior_encoder_stacks,
+            base_dilation=posterior_encoder_base_dilation,
+            global_channels=global_channels,
+            dropout_rate=posterior_encoder_dropout_rate,
+            use_weight_norm=use_weight_norm_in_posterior_encoder,
+        )
+        self.prior_encoder = PosteriorEncoder(
+            in_channels=hidden_channels,
+            out_channels=hidden_channels,
+            hidden_channels=hidden_channels,
+            kernel_size=prior_encoder_kernel_size,
+            layers=prior_encoder_layers,
+            stacks=prior_encoder_stacks,
+            base_dilation=prior_encoder_base_dilation,
+            global_channels=global_channels,
+            dropout_rate=prior_encoder_dropout_rate,
+            use_weight_norm=use_weight_norm_in_prior_encoder,
+        )
+        self.flow_z = ResidualAffineCouplingBlock(
+            in_channels=hidden_channels,
+            hidden_channels=hidden_channels,
+            flows=flow_flows,
+            kernel_size=flow_kernel_size,
+            base_dilation=flow_base_dilation,
+            layers=flow_layers,
+            global_channels=global_channels,
+            dropout_rate=flow_dropout_rate,
+            use_weight_norm=use_weight_norm_in_flow,
+            use_only_mean=use_only_mean_in_flow,
+        )
+        self.flow_w = ResidualAffineCouplingBlock(
+            in_channels=length_regulator_iter,
+            hidden_channels=hidden_channels,
+            flows=flow_flows,
+            kernel_size=flow_kernel_size,
+            base_dilation=flow_base_dilation,
+            layers=flow_layers,
+            global_channels=global_channels,
+            dropout_rate=flow_dropout_rate,
+            use_weight_norm=use_weight_norm_in_flow,
+            use_only_mean=use_only_mean_in_flow,
+        )
+        self.alignment_module = WarpingPredictor(
+            in_channels=hidden_channels,
+            out_channels=length_regulator_iter,
+            hidden_channels=hidden_channels,
+            kernel_size=warping_predictor_kernel_size,
+            layers=warping_predictor_layers,
+            stacks=warping_predictor_stacks,
+            base_dilation=warping_predictor_base_dilation,
+            global_channels=global_channels,
+            dropout_rate=warping_predictor_dropout_rate,
+            use_weight_norm=use_weight_norm_in_warping_predictor,
+        )
+        self.warping_predictor = WarpingPredictor(
+            in_channels=hidden_channels,
+            out_channels=length_regulator_iter,
+            hidden_channels=hidden_channels,
+            kernel_size=warping_predictor_kernel_size,
+            layers=warping_predictor_layers,
+            stacks=warping_predictor_stacks,
+            base_dilation=warping_predictor_base_dilation,
+            global_channels=global_channels,
+            dropout_rate=warping_predictor_dropout_rate,
+            use_weight_norm=use_weight_norm_in_warping_predictor,
+        )
+        self.length_regulator = LengthRegulator()
+
+        self.upsample_factor = int(np.prod(decoder_upsample_scales))
+        self.spks = None
+        if spks is not None and spks > 1:
+            assert global_channels > 0
+            self.spks = spks
+            self.global_emb = torch.nn.Embedding(spks, global_channels)
+        self.spk_embed_dim = None
+        if spk_embed_dim is not None and spk_embed_dim > 0:
+            assert global_channels > 0
+            self.spk_embed_dim = spk_embed_dim
+            self.spemb_proj = torch.nn.Linear(spk_embed_dim, global_channels)
+        self.langs = None
+        if langs is not None and langs > 1:
+            assert global_channels > 0
+            self.langs = langs
+            self.lang_emb = torch.nn.Embedding(langs, global_channels)
+
+    def forward(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        sids: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+    ) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        Tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+        ],
+    ]:
+        """Calculate forward propagation.
+
+        Args:
+            text (Tensor): Text index tensor (B, T_text).
+            text_lengths (Tensor): Text length tensor (B,).
+            feats (Tensor): Feature tensor (B, aux_channels, T_feats).
+            feats_lengths (Tensor): Feature length tensor (B,).
+            sids (Optional[Tensor]): Speaker index tensor (B,) or (B, 1).
+            spembs (Optional[Tensor]): Speaker embedding tensor (B, spk_embed_dim).
+            lids (Optional[Tensor]): Language index tensor (B,) or (B, 1).
+
+        Returns:
+            Tensor: Waveform tensor (B, 1, segment_size * upsample_factor).
+            Tensor: Duration negative log-likelihood (NLL) tensor (B,).
+            Tensor: Monotonic attention weight tensor (B, 1, T_feats, T_text).
+            Tensor: Segments start index tensor (B,).
+            Tensor: Text mask tensor (B, 1, T_text).
+            Tensor: Feature mask tensor (B, 1, T_feats).
+            tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+                - Tensor: Posterior encoder hidden representation (B, H, T_feats).
+                - Tensor: Flow hidden representation (B, H, T_feats).
+                - Tensor: Expanded text encoder projected mean (B, H, T_feats).
+                - Tensor: Expanded text encoder projected scale (B, H, T_feats).
+                - Tensor: Posterior encoder projected mean (B, H, T_feats).
+                - Tensor: Posterior encoder projected scale (B, H, T_feats).
+
+        """
+        # calculate global conditioning
+        g = None
+        if self.spks is not None:
+            # speaker one-hot vector embedding: (B, global_channels, 1)
+            g = self.global_emb(sids.view(-1)).unsqueeze(-1)
+        if self.spk_embed_dim is not None:
+            # pretreined speaker embedding, e.g., X-vector (B, global_channels, 1)
+            g_ = self.spemb_proj(F.normalize(spembs)).unsqueeze(-1)
+            if g is None:
+                g = g_
+            else:
+                g = g + g_
+        if self.langs is not None:
+            # language one-hot vector embedding: (B, global_channels, 1)
+            g_ = self.lang_emb(lids.view(-1)).unsqueeze(-1)
+            if g is None:
+                g = g_
+            else:
+                g = g + g_
+
+        # forward posterior encoder
+        feats_mask = (make_non_pad_mask(feats_lengths).unsqueeze(1).to(dtype=feats.dtype, device=feats.device,))
+        feats_embs = self.feats_encoder.forward(feats, feats_mask, g=g)
+
+        # forward text encoder
+        text_embs, _, _, x_mask = self.text_encoder.forward(text, text_lengths)
+
+        # forward duration predictor
+        w_q, w_m, w_logs, _ = self.alignment_module.forward(text_embs, text_lengths, feats_lengths, g=g, y=feats_embs)
+        v_p, v_m, v_logs, _ = self.warping_predictor.forward(text_embs, text_lengths, feats_lengths, g=g)
+
+        # forward flow
+        z_q, z_m, z_logs, y_mask = self.posterior_encoder.forward(feats_embs, feats_lengths, g=g)
+        s_q = self.flow_z.forward(z_q, y_mask, g=g)  # (B, H, T_feats)
+        v_q = self.flow_w.forward(w_q, y_mask, g=g)  # (B, H, T_feats)
+        with torch.no_grad():
+            w_p = self.flow_w.forward(v_p, y_mask, g=g, inverse=True)  # (B, H, T_feats)
+
+        # forward length regulator
+        text_embs, _ = self.length_regulator(text_embs, w_q, text_lengths, feats_lengths, [w_p.detach()])
+        s_p, s_m, s_logs, _  = self.prior_encoder.forward(text_embs, feats_lengths, g=g)
+
+        # get random segments
+        z_segments, z_start_idxs = get_random_segments(
+            z_q,
+            feats_lengths,
+            self.segment_size,
+        )
+
+        # forward decoder with random segments
+        wav = self.decoder.forward(z_segments, g=g)
+
+        return (
+            wav,
+            z_start_idxs,
+            x_mask,
+            y_mask,
+            (s_p, s_q, s_m, s_logs, z_m, z_logs),
+            (v_p, v_q, v_m, v_logs, w_m, w_logs),
+        )
+
+    def inference(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        feats: Optional[torch.Tensor] = None,
+        feats_lengths: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        dur: Optional[torch.Tensor] = None,
+        noise_scale: float = 0.667,
+        noise_scale_dur: float = 0.8,
+        alpha: float = 1.0,
+        max_len: Optional[int] = None,
+        use_teacher_forcing: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Run inference.
+
+        Args:
+            text (Tensor): Input text index tensor (B, T_text,).
+            text_lengths (Tensor): Text length tensor (B,).
+            feats (Tensor): Feature tensor (B, aux_channels, T_feats,).
+            feats_lengths (Tensor): Feature length tensor (B,).
+            sids (Optional[Tensor]): Speaker index tensor (B,) or (B, 1).
+            spembs (Optional[Tensor]): Speaker embedding tensor (B, spk_embed_dim).
+            lids (Optional[Tensor]): Language index tensor (B,) or (B, 1).
+            dur (Optional[Tensor]): Ground-truth duration (B, T_text,). If provided,
+                skip the prediction of durations (i.e., teacher forcing).
+            noise_scale (float): Noise scale parameter for flow.
+            noise_scale_dur (float): Noise scale parameter for duration predictor.
+            alpha (float): Alpha parameter to control the speed of generated speech.
+            max_len (Optional[int]): Maximum length of acoustic feature sequence.
+            use_teacher_forcing (bool): Whether to use teacher forcing.
+
+        Returns:
+            Tensor: Generated waveform tensor (B, T_wav).
+            Tensor: Monotonic attention weight tensor (B, T_feats, T_text).
+            Tensor: Duration tensor (B, T_text).
+
+        """
+        # encoder
+        text_embs, _, _, _ = self.text_encoder.forward(text, text_lengths)
+        g = None
+        if self.spks is not None:
+            # (B, global_channels, 1)
+            g = self.global_emb(sids.view(-1)).unsqueeze(-1)
+        if self.spk_embed_dim is not None:
+            # (B, global_channels, 1)
+            g_ = self.spemb_proj(F.normalize(spembs.unsqueeze(0))).unsqueeze(-1)
+            if g is None:
+                g = g_
+            else:
+                g = g + g_
+        if self.langs is not None:
+            # (B, global_channels, 1)
+            g_ = self.lang_emb(lids.view(-1)).unsqueeze(-1)
+            if g is None:
+                g = g_
+            else:
+                g = g + g_
+
+        if use_teacher_forcing:
+            # forward posterior encoder
+            feats_mask = (make_non_pad_mask(feats_lengths).unsqueeze(1).to(dtype=feats.dtype, device=feats.device,))
+            feats_embs = self.feats_encoder.forward(feats, feats_mask, g=g)
+            # forward duration predictor
+            w, _, _, _ = self.alignment_module.forward(text_embs, text_lengths, feats_lengths, g=g, y=feats_embs)
+        else:
+            ## forward duration predictor
+            v, _, _, y_mask = self.warping_predictor.forward(x, text_lengths, feats_lengths, g=g)
+            w = self.flow_w.forward(v, y_mask, g=g, inverse=True)  # (B, H, T_feats)
+
+        # forward length regulator
+        x, f = self.length_regulator.forward(text_embs, w, text_lengths, feats_lengths)
+        attn = self.length_regulator.map(text.size(-1), f)
+        f = f.round().long().clamp(0, text.size(-1) - 1)
+        dur = torch.zeros_like(text).scatter_add(-1, f, torch.ones_like(f))
+        s, _, _, _  = self.prior_encoder.forward(x, feats_lengths, g=g)
+        z = self.flow_z.forward(s, y_mask, g=g, inverse=True)  # (B, H, T_feats)
+        # forward decoder with random segments
+        wav = self.decoder(z * y_mask, g=g)
+        return wav.squeeze(1), attn.squeeze(1), dur.squeeze(1)

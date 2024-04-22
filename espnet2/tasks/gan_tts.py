@@ -16,7 +16,7 @@ from espnet2.gan_tts.espnet_model import ESPnetGANTTSModel
 from espnet2.gan_tts.jets import JETS
 from espnet2.gan_tts.jets_gw import JETSGW
 from espnet2.gan_tts.joint import JointText2Wav
-from espnet2.gan_tts.vits import VITS
+from espnet2.gan_tts.vits import VITS, VITSGW
 from espnet2.layers.abs_normalize import AbsNormalize
 from espnet2.layers.global_mvn import GlobalMVN
 from espnet2.layers.utterance_mvn import UtteranceMVN
@@ -60,6 +60,7 @@ tts_choices = ClassChoices(
     "tts",
     classes=dict(
         vits=VITS,
+        vits_gw=VITSGW,
         joint_text2wav=JointText2Wav,
         jets=JETS,
         jets_gw=JETSGW

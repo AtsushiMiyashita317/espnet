@@ -27,6 +27,7 @@ from espnet.nets.pytorch_backend.rnn.attentions import (
 )
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet2.tts.fastspeech_gw.length_regulator import LengthRegulator
+from espnet2.gan_tts.vits.length_regulator import LengthRegulator as LR
 from espnet.nets.pytorch_backend.nets_utils import pad_list
 
 @torch.no_grad()
@@ -124,6 +125,17 @@ def calculate_all_attentions(
                 mq = gw.cubic_interpolation(m, fq.detach()).transpose(-1,-2).detach().cpu()
                 mfa = gw.cubic_interpolation(m, f.to(device=m.device, dtype=m.dtype)).transpose(-1,-2).detach().cpu()
                 outputs[name] = [mp, mq, mfa]
+            elif isinstance(module, LR):
+                xs, _, ilens, olens, plot = input
+                maps = []
+                _, f = output
+                maps.append(module.map(xs.size(-1), f).detach().cpu())
+
+                for ws in plot:
+                    _, f = module.forward(xs, ws, ilens, olens)
+                    maps.append(module.map(xs.size(-1), f).detach().cpu())
+
+                outputs[name] = maps
                     
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
@@ -305,6 +317,20 @@ def calculate_alignments(
                 mq = gw.cubic_interpolation(m, fq.detach()).transpose(-1,-2).detach().cpu()
                 mfa = gw.cubic_interpolation(m, f.to(device=m.device)).transpose(-1,-2).detach().cpu()
                 outputs[name] = [mp, mq, mfa]
+            elif isinstance(module, LR):
+                xs, _, ilens, olens, plot = input
+                maps = []
+                _, f = output
+                f = f * olens.unsqueeze(-1) / ilens.unsqueeze(-1)
+                maps.append(module.map(f.size(-1), f).detach().cpu())
+
+                for ws in plot:
+                    _, f = module.forward(xs, ws, ilens, olens)
+                    f = f * olens.unsqueeze(-1) / ilens.unsqueeze(-1)
+                    maps.append(module.map(f.size(-1), f).detach().cpu())
+
+                outputs[name] = maps
+                    
                     
         handle = modu.register_forward_hook(hook)
         handles[name] = handle
